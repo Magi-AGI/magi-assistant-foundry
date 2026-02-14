@@ -1,0 +1,21 @@
+{
+  "MAGI_BRIDGE": {
+    "Settings": {
+      "SidecarUrl": {
+        "Name": "Sidecar WebSocket URL",
+        "Hint": "WebSocket URL of the Magi sidecar server (e.g., ws://127.0.0.1:3300)"
+      },
+      "SidecarToken": {
+        "Name": "Sidecar Auth Token",
+        "Hint": "Authentication token for connecting to the sidecar"
+      },
+      "EnableVideoCapture": {
+        "Name": "Enable Video Capture",
+        "Hint": "Capture the canvas as video and stream to the sidecar for training data"
+      }
+    },
+    "Connected": "Connected to Magi sidecar",
+    "Disconnected": "Disconnected from Magi sidecar",
+    "Reconnecting": "Reconnecting to Magi sidecar..."
+  }
+}
