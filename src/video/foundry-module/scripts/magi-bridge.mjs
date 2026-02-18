@@ -363,6 +363,7 @@ class MagiBridge {
       speakerAlias: msg.speaker?.alias ?? msg.author?.name ?? 'Unknown',
       content: msg.content ?? '',
       type: msg.type ?? 0,
+      isGm: msg.author?.isGM ?? false,
       whisper: msg.whisper?.map((u) => (typeof u === 'string' ? u : u.id)) ?? [],
       rolls,
       timestamp: msg.timestamp ? new Date(msg.timestamp).toISOString() : new Date().toISOString(),

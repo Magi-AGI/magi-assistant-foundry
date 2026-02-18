@@ -10,6 +10,8 @@ export interface FoundryConfig {
   mcpSocketPath: string;
   mcpAuthToken: string;
   videoDir: string;
+  /** Root of the Foundry VTT Data directory (for image enumeration). */
+  foundryDataDir: string;
 }
 
 let _config: FoundryConfig | null = null;
@@ -31,6 +33,7 @@ export function getConfig(): FoundryConfig {
     mcpSocketPath: process.env.MCP_SOCKET_PATH ?? '',
     mcpAuthToken,
     videoDir: process.env.VIDEO_DIR ?? './data/video',
+    foundryDataDir: process.env.FOUNDRY_DATA_DIR ?? '',
   };
 
   return _config;

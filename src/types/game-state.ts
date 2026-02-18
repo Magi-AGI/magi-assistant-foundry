@@ -16,6 +16,7 @@ export interface ChatMessageRecord {
   speakerAlias: string;
   content: string;
   type: number;
+  isGm: boolean;
   whisper: string[];
   rolls: ChatRoll[];
   parsedRoll?: FateRollResult;
