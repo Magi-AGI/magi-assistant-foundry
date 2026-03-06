@@ -8,15 +8,19 @@ import { GameStateStore } from './foundry/game-state-store.js';
 import { startMcpServer, stopMcpServer, getMcpServer } from './mcp/server.js';
 import { wireLiveEvents } from './mcp/live-events.js';
 import { VideoCaptureCoordinator } from './video/capture.js';
+import { VideoWsServer } from './video/ws-server.js';
 import type { ModuleMessage } from './types/index.js';
 
 const config = getConfig();
 
 const store = new GameStateStore();
 const wsServer = new FoundryWsServer();
+const videoWsServer = new VideoWsServer();
 const videoCapture = new VideoCaptureCoordinator();
 
-// --- Wire WebSocket events → store ---
+let videoChunkOnMainPortWarned = false;
+
+// --- Wire game-state WebSocket events → store ---
 
 wsServer.on('message', (msg: ModuleMessage) => {
   switch (msg.type) {
@@ -39,6 +43,16 @@ wsServer.on('message', (msg: ModuleMessage) => {
       store.applySceneChange(msg.scene);
       break;
     case 'videoChunk':
+      // Backward compat: old Foundry modules still send video on the main port.
+      // Process it, but warn so the user knows to update the module.
+      if (!videoChunkOnMainPortWarned) {
+        logger.warn(
+          `Video chunk received on game-state port ${config.wsPort}. ` +
+          `Update the Foundry module to send video to the dedicated port ${config.videoWsPort} ` +
+          `for better performance.`
+        );
+        videoChunkOnMainPortWarned = true;
+      }
       videoCapture.handleChunk(msg.data, msg.timestamp);
       break;
     case 'pong':
@@ -49,11 +63,20 @@ wsServer.on('message', (msg: ModuleMessage) => {
   }
 });
 
-// --- Wire WS disconnect → mark state stale ---
+// --- Wire video WebSocket events → video capture ---
+
+videoWsServer.on('chunk', (data: string, timestamp: string) => {
+  videoCapture.handleChunk(data, timestamp);
+});
+
+videoWsServer.on('disconnected', () => {
+  videoCapture.stop();
+});
+
+// --- Wire game-state WS disconnect → mark state stale ---
 
 wsServer.on('disconnected', () => {
   store.markDisconnected();
-  videoCapture.stop();
 });
 
 // --- Graceful shutdown ---
@@ -68,6 +91,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   try {
     videoCapture.stop();
+    videoWsServer.stop();
     stopMcpServer();
     wsServer.stop();
     logger.info('Shutdown complete. Goodbye.');
@@ -94,11 +118,13 @@ process.on('uncaughtException', (err) => {
 
 async function main(): Promise<void> {
   logger.info('Magi Assistant Foundry Bridge starting...');
-  logger.info(`  WS port: ${config.wsPort}`);
+  logger.info(`  Game-state WS port: ${config.wsPort}`);
+  logger.info(`  Video WS port: ${config.videoWsPort}`);
   logger.info(`  MCP port: ${config.mcpPort}`);
   logger.info(`  Video dir: ${config.videoDir}`);
 
   wsServer.start();
+  videoWsServer.start();
 
   await startMcpServer(store, wsServer, videoCapture);
 

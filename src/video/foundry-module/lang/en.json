@@ -12,6 +12,10 @@
       "EnableVideoCapture": {
         "Name": "Enable Video Capture",
         "Hint": "Capture the canvas as video and stream to the sidecar for training data"
+      },
+      "VideoSidecarUrl": {
+        "Name": "Video WebSocket URL",
+        "Hint": "Dedicated WebSocket URL for video traffic (separate from game state to avoid blocking)"
       }
     },
     "Connected": "Connected to Magi sidecar",

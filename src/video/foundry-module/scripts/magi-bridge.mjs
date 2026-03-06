@@ -6,14 +6,21 @@
  *
  * Architecture constraint: Foundry v13 has NO server-side module scripts.
  * Everything runs client-side in the GM's browser.
+ *
+ * Traffic isolation: Game state and video use separate WebSocket connections
+ * to avoid head-of-line blocking. Video chunks (~430KB every 5s) would
+ * otherwise delay small game-state events at the TCP layer.
  */
 
 const MODULE_ID = 'magi-bridge';
 const LOG_PREFIX = 'Magi Bridge |';
 
 class MagiBridge {
-  /** @type {WebSocket|null} */
+  /** @type {WebSocket|null} Game state WebSocket */
   ws = null;
+
+  /** @type {WebSocket|null} Video WebSocket (separate connection) */
+  videoWs = null;
 
   /** @type {number} Reconnect delay in ms */
   reconnectDelay = 1000;
@@ -23,6 +30,12 @@ class MagiBridge {
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   reconnectTimer = null;
+
+  /** @type {number} Video reconnect delay in ms */
+  videoReconnectDelay = 1000;
+
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  videoReconnectTimer = null;
 
   /** @type {boolean} */
   intentionalClose = false;
@@ -64,6 +77,15 @@ class MagiBridge {
       type: Boolean,
       default: false,
     });
+
+    game.settings.register(MODULE_ID, 'videoSidecarUrl', {
+      name: game.i18n.localize('MAGI_BRIDGE.Settings.VideoSidecarUrl.Name'),
+      hint: game.i18n.localize('MAGI_BRIDGE.Settings.VideoSidecarUrl.Hint'),
+      scope: 'world',
+      config: true,
+      type: String,
+      default: 'ws://127.0.0.1:3301',
+    });
   }
 
   ready() {
@@ -78,7 +100,7 @@ class MagiBridge {
     this._registerHooks();
   }
 
-  // ─── WebSocket Connection ────────────────────────────────
+  // ─── Game-State WebSocket Connection ───────────────────────
 
   _connect() {
     const baseUrl = game.settings.get(MODULE_ID, 'sidecarUrl');
@@ -103,9 +125,14 @@ class MagiBridge {
       // Send full game state snapshot
       this._sendGameReady();
 
-      // Start video capture if enabled
+      // Start video capture if enabled and not already running
       if (game.settings.get(MODULE_ID, 'enableVideoCapture')) {
-        this._startVideoCapture(2);
+        if (!this.videoWs && !this.videoReconnectTimer) {
+          this._connectVideo();
+        }
+        if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
+          this._startVideoCapture(2);
+        }
       }
     };
 
@@ -121,7 +148,9 @@ class MagiBridge {
     this.ws.onclose = () => {
       console.log(`${LOG_PREFIX} WebSocket closed`);
       this.ws = null;
-      this._stopVideoCapture();
+      // Video capture and video WS continue independently — they have
+      // their own connection and reconnect logic. Only tear them down
+      // on intentional disconnect (module shutdown).
       if (!this.intentionalClose) {
         ui.notifications.warn(game.i18n.localize('MAGI_BRIDGE.Reconnecting'));
         this._scheduleReconnect();
@@ -158,10 +187,94 @@ class MagiBridge {
       this.reconnectTimer = null;
     }
     this._stopVideoCapture();
+    this._disconnectVideo();
     if (this.ws) {
       this.ws.close(1000, 'Module shutting down');
       this.ws = null;
     }
+  }
+
+  // ─── Video WebSocket Connection ────────────────────────────
+
+  _connectVideo() {
+    // Guard: skip if already connected or connecting
+    if (this.videoWs && (this.videoWs.readyState === WebSocket.OPEN || this.videoWs.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    // Cancel pending reconnect timer to avoid duplicate connections
+    if (this.videoReconnectTimer) {
+      clearTimeout(this.videoReconnectTimer);
+      this.videoReconnectTimer = null;
+    }
+
+    const baseUrl = game.settings.get(MODULE_ID, 'videoSidecarUrl');
+    const token = game.settings.get(MODULE_ID, 'sidecarToken');
+    const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+
+    try {
+      this.videoWs = new WebSocket(url);
+    } catch (err) {
+      console.error(`${LOG_PREFIX} Failed to create video WebSocket:`, err);
+      this._scheduleVideoReconnect();
+      return;
+    }
+
+    this.videoWs.onopen = () => {
+      console.log(`${LOG_PREFIX} Video WS connected`);
+      this.videoReconnectDelay = 1000;
+    };
+
+    this.videoWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'ping') {
+          this.videoWs?.send(JSON.stringify({ type: 'pong' }));
+        }
+      } catch { /* ignore parse errors on video channel */ }
+    };
+
+    this.videoWs.onclose = () => {
+      console.log(`${LOG_PREFIX} Video WS closed`);
+      this.videoWs = null;
+      if (!this.intentionalClose && game.settings.get(MODULE_ID, 'enableVideoCapture')) {
+        this._scheduleVideoReconnect();
+      }
+    };
+
+    this.videoWs.onerror = (err) => {
+      console.error(`${LOG_PREFIX} Video WS error:`, err);
+    };
+  }
+
+  _scheduleVideoReconnect() {
+    if (this.videoReconnectTimer) return;
+    console.log(`${LOG_PREFIX} Video WS reconnecting in ${this.videoReconnectDelay}ms...`);
+    this.videoReconnectTimer = setTimeout(() => {
+      this.videoReconnectTimer = null;
+      this._connectVideo();
+    }, this.videoReconnectDelay);
+    this.videoReconnectDelay = Math.min(this.videoReconnectDelay * 2, this.maxReconnectDelay);
+  }
+
+  _disconnectVideo() {
+    if (this.videoReconnectTimer) {
+      clearTimeout(this.videoReconnectTimer);
+      this.videoReconnectTimer = null;
+    }
+    if (this.videoWs) {
+      this.videoWs.close(1000, 'Video shutting down');
+      this.videoWs = null;
+    }
+  }
+
+  /** Send a video chunk on the dedicated video WS. Drops if unavailable. */
+  _sendVideo(msg) {
+    if (this.videoWs && this.videoWs.readyState === WebSocket.OPEN) {
+      this.videoWs.send(JSON.stringify(msg));
+    }
+    // No fallback to main WS — sending ~430KB video chunks on the game-state
+    // connection would reintroduce head-of-line blocking. Chunks are dropped
+    // until the video WS reconnects.
   }
 
   // ─── Sidecar Message Handling ────────────────────────────
@@ -452,12 +565,12 @@ class MagiBridge {
       });
 
       this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && this.ws?.readyState === WebSocket.OPEN) {
+        if (event.data.size > 0) {
           const reader = new FileReader();
           reader.onloadend = () => {
             const base64 = /** @type {string} */ (reader.result).split(',')[1];
             if (base64) {
-              this._send({
+              this._sendVideo({
                 type: 'videoChunk',
                 data: base64,
                 timestamp: new Date().toISOString(),

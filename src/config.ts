@@ -6,6 +6,8 @@ dotenvConfig();
 export interface FoundryConfig {
   wsPort: number;
   wsToken: string;
+  /** Dedicated WebSocket port for video chunk traffic (default: wsPort + 1). */
+  videoWsPort: number;
   mcpPort: number;
   mcpSocketPath: string;
   mcpAuthToken: string;
@@ -26,9 +28,12 @@ export function getConfig(): FoundryConfig {
   if (wsToken) registerSecret(wsToken);
   if (mcpAuthToken) registerSecret(mcpAuthToken);
 
+  const wsPort = parseInt(process.env.WS_PORT ?? '3300', 10) || 3300;
+
   _config = {
-    wsPort: parseInt(process.env.WS_PORT ?? '3300', 10) || 3300,
+    wsPort,
     wsToken,
+    videoWsPort: parseInt(process.env.VIDEO_WS_PORT ?? '', 10) || (wsPort + 1),
     mcpPort: parseInt(process.env.MCP_PORT ?? '3002', 10) || 3002,
     mcpSocketPath: process.env.MCP_SOCKET_PATH ?? '',
     mcpAuthToken,
