@@ -90,7 +90,18 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
       const transport = new SSEServerTransport('/messages', res);
       transports.set(transport.sessionId, transport);
 
+      // SDK SSEServerTransport sends no periodic data after the initial endpoint
+      // event. Without traffic, undici's 5-minute body timeout fires on the
+      // aggregator side and triggers a silent reconnect. Emit a comment frame
+      // every 25s to keep the stream warm.
+      const keepalive = setInterval(() => {
+        if (!res.writableEnded && !res.destroyed) {
+          try { res.write(': keepalive\n\n'); } catch { /* connection already gone */ }
+        }
+      }, 25_000);
+
       res.on('close', () => {
+        clearInterval(keepalive);
         transports.delete(transport.sessionId);
       });
 
