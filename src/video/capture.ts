@@ -88,8 +88,10 @@ export class VideoCaptureCoordinator {
     this.chunkCount = 0;
     this.backpressured = false;
 
-    // flags: 'w' (not 'a') — each session gets a fresh file to produce valid WebM
-    this.outputStream = fs.createWriteStream(this.filePath, { flags: 'w' });
+    // flags: 'w' (not 'a') — each session gets a fresh file to produce valid WebM.
+    // highWaterMark: 1 MB — one base64-decoded chunk is ~320 KB, exceeds the
+    // 16 KB default and trips spurious backpressure warnings every 5 s.
+    this.outputStream = fs.createWriteStream(this.filePath, { flags: 'w', highWaterMark: 1024 * 1024 });
     this.outputStream.on('error', (err) => {
       logger.error('Video capture: write stream error:', err);
     });
