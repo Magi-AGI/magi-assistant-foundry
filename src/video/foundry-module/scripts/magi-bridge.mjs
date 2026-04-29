@@ -125,15 +125,10 @@ class MagiBridge {
       // Send full game state snapshot
       this._sendGameReady();
 
-      // Start video capture if enabled and not already running
-      if (game.settings.get(MODULE_ID, 'enableVideoCapture')) {
-        if (!this.videoWs && !this.videoReconnectTimer) {
-          this._connectVideo();
-        }
-        if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
-          this._startVideoCapture(2);
-        }
-      }
+      // Note: video capture no longer auto-starts on connect. The GM must
+      // explicitly start it via the scene-controls toolbar button or the
+      // module API (game.modules.get('magi-bridge').api.startRecording()).
+      // This prevents accidental long recordings from idle browser tabs.
     };
 
     this.ws.onmessage = (event) => {
@@ -548,6 +543,58 @@ class MagiBridge {
     });
   }
 
+  // ─── Recording control (public API) ─────────────────────
+
+  /** True if video is actively being recorded right now. */
+  isRecording() {
+    return !!(this.mediaRecorder && this.mediaRecorder.state === 'recording');
+  }
+
+  /** Start a recording session. Returns true if started, false if blocked. */
+  startRecording() {
+    if (!game.user.isGM) {
+      ui.notifications.warn('Only the GM can start video recording.');
+      return false;
+    }
+    if (!game.settings.get(MODULE_ID, 'enableVideoCapture')) {
+      ui.notifications.warn('Video capture is disabled in module settings. Enable it first under Configure Settings → Module Settings → Magi Bridge.');
+      return false;
+    }
+    if (this.isRecording()) {
+      ui.notifications.info('Video recording is already running.');
+      return false;
+    }
+    if (!this.videoWs && !this.videoReconnectTimer) {
+      this._connectVideo();
+    }
+    this._startVideoCapture(2);
+    if (this.isRecording()) {
+      ui.notifications.info('Video recording started.');
+      ui.controls?.render();
+      return true;
+    }
+    return false;
+  }
+
+  /** Stop the current recording session. Returns true if stopped, false if no-op. */
+  stopRecording() {
+    if (!game.user.isGM) return false;
+    if (!this.isRecording()) {
+      ui.notifications.info('No active video recording.');
+      return false;
+    }
+    this._stopVideoCapture();
+    this._disconnectVideo();
+    ui.notifications.info('Video recording stopped.');
+    ui.controls?.render();
+    return true;
+  }
+
+  /** Convenience: start if stopped, stop if started. */
+  toggleRecording() {
+    return this.isRecording() ? this.stopRecording() : this.startRecording();
+  }
+
   // ─── Video Capture ──────────────────────────────────────
 
   _startVideoCapture(fps = 2) {
@@ -609,8 +656,53 @@ const bridge = new MagiBridge();
 
 Hooks.once('init', () => {
   bridge.init();
+
+  // Expose recording control on the module's public API so macros, the
+  // browser console, or external orchestration (Discord session lifecycle)
+  // can drive recording without touching the bridge instance directly.
+  const mod = game.modules.get(MODULE_ID);
+  if (mod) {
+    mod.api = {
+      startRecording: () => bridge.startRecording(),
+      stopRecording: () => bridge.stopRecording(),
+      toggleRecording: () => bridge.toggleRecording(),
+      isRecording: () => bridge.isRecording(),
+    };
+  }
 });
 
 Hooks.once('ready', () => {
   bridge.ready();
+});
+
+// Add a toolbar button under the Tokens scene controls so the GM has a
+// one-click start/stop. Defensive against v12 array shape and v13 object shape.
+Hooks.on('getSceneControlButtons', (controls) => {
+  if (!game.user?.isGM) return;
+
+  const tool = {
+    name: 'magi-record',
+    title: bridge.isRecording() ? 'Stop Magi Video Recording' : 'Start Magi Video Recording',
+    icon: 'fas fa-video',
+    toggle: true,
+    active: bridge.isRecording(),
+    button: false,
+    visible: true,
+    onClick: () => bridge.toggleRecording(),
+  };
+
+  if (Array.isArray(controls)) {
+    const group = controls.find((c) => c.name === 'token' || c.name === 'tokens');
+    if (group) {
+      if (!group.tools) group.tools = [];
+      if (Array.isArray(group.tools)) group.tools.push(tool);
+      else group.tools[tool.name] = tool;
+    }
+  } else if (controls && typeof controls === 'object') {
+    const group = controls.tokens || controls.token;
+    if (group) {
+      if (!group.tools) group.tools = {};
+      group.tools[tool.name] = tool;
+    }
+  }
 });
