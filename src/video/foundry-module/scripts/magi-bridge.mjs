@@ -231,7 +231,11 @@ class MagiBridge {
     this.videoWs.onclose = () => {
       console.log(`${LOG_PREFIX} Video WS closed`);
       this.videoWs = null;
-      if (!this.intentionalClose && game.settings.get(MODULE_ID, 'enableVideoCapture')) {
+      // Only reconnect if we're actively recording. If the GM toggled stop,
+      // the recorder is inactive and we should stay disconnected until the
+      // next explicit start. The setting alone is no longer enough — it's
+      // just a permission gate.
+      if (!this.intentionalClose && this.isRecording()) {
         this._scheduleVideoReconnect();
       }
     };
