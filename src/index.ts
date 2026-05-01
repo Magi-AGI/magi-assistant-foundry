@@ -6,7 +6,7 @@ import { logger } from './logger.js';
 import { FoundryWsServer } from './foundry/ws-server.js';
 import { GameStateStore } from './foundry/game-state-store.js';
 import { RecordingStateStore } from './foundry/recording-state.js';
-import { startMcpServer, stopMcpServer, getMcpServer } from './mcp/server.js';
+import { startMcpServer, stopMcpServer, getMcpServerRegistry } from './mcp/server.js';
 import { wireLiveEvents } from './mcp/live-events.js';
 import { VideoCaptureCoordinator } from './video/capture.js';
 import { VideoWsServer } from './video/ws-server.js';
@@ -135,9 +135,9 @@ async function main(): Promise<void> {
   await startMcpServer(store, wsServer, videoCapture, recordingState);
 
   // Wire live events once MCP server is up
-  const mcp = getMcpServer();
-  if (mcp) {
-    wireLiveEvents(mcp, store);
+  const registry = getMcpServerRegistry();
+  if (registry) {
+    wireLiveEvents(registry, store);
   }
 
   logger.info('Foundry Bridge ready — waiting for Foundry module connection');

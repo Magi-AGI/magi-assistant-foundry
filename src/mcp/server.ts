@@ -20,13 +20,40 @@ import type { VideoCaptureCoordinator } from '../video/capture.js';
 const MCP_HOST = '127.0.0.1';
 
 let httpServer: http.Server | null = null;
-let mcpServer: McpServer | null = null;
 let activeSocketPath: string | null = null;
 
-const transports = new Map<string, SSEServerTransport>();
+interface Session {
+  transport: SSEServerTransport;
+  mcpServer: McpServer;
+}
 
-export function getMcpServer(): McpServer | null {
-  return mcpServer;
+const sessions = new Map<string, Session>();
+/** Set of all active McpServer instances, used for live-event broadcasts. */
+const activeServers = new Set<McpServer>();
+
+/** Registry of broadcast hooks. Returned by startMcpServer for live-event wiring. */
+export interface McpServerRegistry {
+  /**
+   * Run `fn` on every currently-connected McpServer instance. Errors per
+   * instance are isolated and logged.
+   */
+  broadcast(fn: (server: McpServer) => Promise<void>): Promise<void>;
+}
+
+const registry: McpServerRegistry = {
+  async broadcast(fn) {
+    for (const server of activeServers) {
+      try {
+        await fn(server);
+      } catch (err) {
+        logger.debug('MCP broadcast error:', err);
+      }
+    }
+  },
+};
+
+export function getMcpServerRegistry(): McpServerRegistry | null {
+  return httpServer ? registry : null;
 }
 
 /** Check if a Unix Domain Socket has a live listener. */
@@ -51,23 +78,27 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
     return;
   }
 
-  mcpServer = new McpServer(
-    {
-      name: 'magi-assistant-foundry',
-      version: '0.1.0',
-    },
-    {
-      capabilities: {
-        resources: {},
-        tools: {},
-      },
-    }
-  );
-
-  registerResources(mcpServer, store, videoCapture);
-  registerTools(mcpServer, store, wsServer, recordingState);
-
   const mcpPort = config.mcpPort;
+
+  /** Build a fresh McpServer per SSE connection. The underlying Server only
+   * supports a single transport, so each client must get its own instance. */
+  function createServerInstance(): McpServer {
+    const instance = new McpServer(
+      {
+        name: 'magi-assistant-foundry',
+        version: '0.1.0',
+      },
+      {
+        capabilities: {
+          resources: {},
+          tools: {},
+        },
+      }
+    );
+    registerResources(instance, store, videoCapture);
+    registerTools(instance, store, wsServer, recordingState);
+    return instance;
+  }
 
   httpServer = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -89,7 +120,9 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
 
     if (isGetSse) {
       const transport = new SSEServerTransport('/messages', res);
-      transports.set(transport.sessionId, transport);
+      const instance = createServerInstance();
+      sessions.set(transport.sessionId, { transport, mcpServer: instance });
+      activeServers.add(instance);
 
       // SDK SSEServerTransport sends no periodic data after the initial endpoint
       // event. Without traffic, undici's 5-minute body timeout fires on the
@@ -103,20 +136,21 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
 
       res.on('close', () => {
         clearInterval(keepalive);
-        transports.delete(transport.sessionId);
+        sessions.delete(transport.sessionId);
+        activeServers.delete(instance);
       });
 
-      await mcpServer!.server.connect(transport);
+      await instance.server.connect(transport);
     } else if (url.pathname === '/messages' && req.method === 'POST') {
       const sessionId = url.searchParams.get('sessionId');
-      if (!sessionId || !transports.has(sessionId)) {
+      const session = sessionId ? sessions.get(sessionId) : undefined;
+      if (!session) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid session' }));
         return;
       }
 
-      const transport = transports.get(sessionId)!;
-      await transport.handlePostMessage(req, res);
+      await session.transport.handlePostMessage(req, res);
     } else {
       res.writeHead(404);
       res.end('Not found');
@@ -130,7 +164,6 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
       const isAlive = await checkSocketAlive(socketPath);
       if (isAlive) {
         logger.error(`MCP server: another instance is already listening on ${socketPath} — aborting`);
-        mcpServer = null;
         httpServer.close();
         httpServer = null;
         return;
@@ -172,10 +205,9 @@ export function stopMcpServer(): void {
     activeSocketPath = null;
   }
 
-  for (const [, transport] of transports) {
-    transport.close?.();
+  for (const [, session] of sessions) {
+    session.transport.close?.();
   }
-  transports.clear();
-
-  mcpServer = null;
+  sessions.clear();
+  activeServers.clear();
 }
