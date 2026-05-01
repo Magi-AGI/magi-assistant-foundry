@@ -10,8 +10,10 @@ export type {
   SceneChangeMessage,
   VideoChunkMessage,
   PongMessage,
+  RecordingStatusMessage,
   SidecarMessage,
   WhisperMessage,
   QueryStateMessage,
   PingMessage,
+  RecordingControlMessage,
 } from './protocol.js';

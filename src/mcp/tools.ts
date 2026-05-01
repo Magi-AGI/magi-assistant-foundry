@@ -8,8 +8,12 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { GameStateStore } from '../foundry/game-state-store.js';
 import type { FoundryWsServer } from '../foundry/ws-server.js';
+import type { RecordingStateStore } from '../foundry/recording-state.js';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
+
+/** How long the sidecar waits for the browser to confirm a recording state change before giving up. */
+const RECORDING_CONTROL_TIMEOUT_MS = 5_000;
 
 /** Fate ladder labels. */
 function fateLadder(value: number): string {
@@ -31,7 +35,7 @@ function fateLadder(value: number): string {
   return ladder[value] ?? `+${value}`;
 }
 
-export function registerTools(server: McpServer, store: GameStateStore, wsServer: FoundryWsServer): void {
+export function registerTools(server: McpServer, store: GameStateStore, wsServer: FoundryWsServer, recordingState?: RecordingStateStore): void {
   // send_whisper — send a whispered message to the GM in Foundry
   server.tool(
     'send_whisper',
@@ -232,4 +236,133 @@ export function registerTools(server: McpServer, store: GameStateStore, wsServer
       }
     }
   );
+
+  // recording_start / recording_stop / recording_status — Phase 2 of the
+  // explicit-recording-control architecture. The browser-side magi-bridge
+  // module owns the MediaRecorder; the sidecar mirrors state and forwards
+  // start/stop requests. A control message returns success only after the
+  // browser confirms the transition via a recordingStatus echo.
+  if (recordingState) {
+    server.tool(
+      'recording_start',
+      'Start Foundry video recording. Sends a start command to the browser-side magi-bridge module and waits for confirmation. The enableVideoCapture world setting must be true; otherwise the request is rejected by the module.',
+      {
+        reason: z.string().optional().describe('Optional human-readable reason for the start (logged for audit, e.g. "Discord session 12345 started").'),
+      },
+      async ({ reason }) => {
+        if (!wsServer.isConnected()) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: Foundry module not connected — cannot start recording.' }],
+            isError: true,
+          };
+        }
+        const snapshot = recordingState.snapshot;
+        if (snapshot.recording) {
+          return {
+            content: [{ type: 'text' as const, text: `Recording already active (since ${snapshot.lastChangedAt}, reason "${snapshot.lastReason}").` }],
+          };
+        }
+
+        const { correlationId, promise } = recordingState.awaitNextStatusForCorrelation(RECORDING_CONTROL_TIMEOUT_MS);
+        const sent = wsServer.send({ type: 'recordingControl', action: 'start', correlationId });
+        if (!sent) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: failed to send recordingControl message to module.' }],
+            isError: true,
+          };
+        }
+        logger.info(`recording_start requested${reason ? ` (${reason})` : ''}`);
+
+        try {
+          const result = await promise;
+          if (result.recording) {
+            return {
+              content: [{ type: 'text' as const, text: `Recording started (reason: "${result.lastReason}", at ${result.lastChangedAt}).` }],
+            };
+          }
+          return {
+            content: [{ type: 'text' as const, text: `Module declined to start recording: ${result.lastReason}` }],
+            isError: true,
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.tool(
+      'recording_stop',
+      'Stop Foundry video recording. Sends a stop command to the browser-side magi-bridge module and waits for confirmation.',
+      {
+        reason: z.string().optional().describe('Optional human-readable reason for the stop (logged for audit).'),
+      },
+      async ({ reason }) => {
+        if (!wsServer.isConnected()) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: Foundry module not connected — cannot stop recording.' }],
+            isError: true,
+          };
+        }
+        const snapshot = recordingState.snapshot;
+        if (!snapshot.recording) {
+          return {
+            content: [{ type: 'text' as const, text: `Recording is not active (last reason "${snapshot.lastReason}", at ${snapshot.lastChangedAt}).` }],
+          };
+        }
+
+        const { correlationId, promise } = recordingState.awaitNextStatusForCorrelation(RECORDING_CONTROL_TIMEOUT_MS);
+        const sent = wsServer.send({ type: 'recordingControl', action: 'stop', correlationId });
+        if (!sent) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: failed to send recordingControl message to module.' }],
+            isError: true,
+          };
+        }
+        logger.info(`recording_stop requested${reason ? ` (${reason})` : ''}`);
+
+        try {
+          const result = await promise;
+          if (!result.recording) {
+            return {
+              content: [{ type: 'text' as const, text: `Recording stopped (reason: "${result.lastReason}", at ${result.lastChangedAt}).` }],
+            };
+          }
+          return {
+            content: [{ type: 'text' as const, text: `Module reported still-recording after stop: ${result.lastReason}` }],
+            isError: true,
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: 'text' as const, text: `Error: ${message}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.tool(
+      'recording_status',
+      'Get the current Foundry video recording state. Synchronous read of the sidecar mirror — reflects the browser as of the last recordingStatus message.',
+      {},
+      async () => {
+        const snapshot = recordingState.snapshot;
+        const moduleConnected = wsServer.isConnected();
+        const payload = {
+          recording: snapshot.recording,
+          lastChangedAt: snapshot.lastChangedAt,
+          lastReason: snapshot.lastReason,
+          knownToBrowser: snapshot.knownToBrowser,
+          moduleConnected,
+        };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+        };
+      }
+    );
+  }
 }

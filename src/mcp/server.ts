@@ -14,6 +14,7 @@ import { registerResources } from './resources.js';
 import { registerTools } from './tools.js';
 import type { GameStateStore } from '../foundry/game-state-store.js';
 import type { FoundryWsServer } from '../foundry/ws-server.js';
+import type { RecordingStateStore } from '../foundry/recording-state.js';
 import type { VideoCaptureCoordinator } from '../video/capture.js';
 
 const MCP_HOST = '127.0.0.1';
@@ -43,7 +44,7 @@ function checkSocketAlive(socketPath: string): Promise<boolean> {
   });
 }
 
-export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsServer, videoCapture?: VideoCaptureCoordinator): Promise<void> {
+export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsServer, videoCapture?: VideoCaptureCoordinator, recordingState?: RecordingStateStore): Promise<void> {
   const config = getConfig();
   if (!config.mcpAuthToken) {
     logger.info('MCP server: disabled (no MCP_AUTH_TOKEN set)');
@@ -64,7 +65,7 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
   );
 
   registerResources(mcpServer, store, videoCapture);
-  registerTools(mcpServer, store, wsServer);
+  registerTools(mcpServer, store, wsServer, recordingState);
 
   const mcpPort = config.mcpPort;
 

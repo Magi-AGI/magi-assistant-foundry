@@ -125,10 +125,16 @@ class MagiBridge {
       // Send full game state snapshot
       this._sendGameReady();
 
+      // Tell the sidecar what our recording state is right now so its mirror
+      // is correct from the first message. Important after browser reload
+      // (F5 stops recording but the sidecar mirror needs to know).
+      this._sendRecordingStatus('snapshot');
+
       // Note: video capture no longer auto-starts on connect. The GM must
-      // explicitly start it via the scene-controls toolbar button or the
-      // module API (game.modules.get('magi-bridge').api.startRecording()).
-      // This prevents accidental long recordings from idle browser tabs.
+      // explicitly start it via the scene-controls toolbar button, the
+      // module API (game.modules.get('magi-bridge').api.startRecording()),
+      // or a sidecar-driven recordingControl message (Phase 2 — Discord
+      // session lifecycle integration).
     };
 
     this.ws.onmessage = (event) => {
@@ -285,13 +291,61 @@ class MagiBridge {
         break;
       case 'queryState':
         this._sendGameReady();
+        this._sendRecordingStatus('snapshot');
         break;
       case 'ping':
         this._send({ type: 'pong' });
         break;
+      case 'recordingControl':
+        this._handleRecordingControl(msg);
+        break;
       default:
         console.warn(`${LOG_PREFIX} Unknown sidecar message:`, msg.type);
     }
+  }
+
+  /**
+   * Sidecar-driven recording control. Calls the same public-API entrypoint the
+   * toolbar button uses, then echoes the resulting state back via
+   * recordingStatus so the sidecar's state mirror (and any in-flight MCP tool
+   * call awaiting this correlationId) sees the outcome.
+   */
+  _handleRecordingControl(msg) {
+    const correlationId = msg.correlationId;
+    if (msg.action === 'start') {
+      const wasRecording = this.isRecording();
+      const ok = this.startRecording();
+      if (this.isRecording()) {
+        // startRecording's internal _sendRecordingStatus has already fired without
+        // a correlationId — send a second status purely to carry the correlation
+        // back to the requesting MCP tool. Reason reflects whether this call
+        // actually transitioned state or was a no-op (already-recording).
+        this._sendRecordingStatus(wasRecording ? 'already-recording' : 'started', correlationId);
+      } else {
+        // Block reasons handled inside startRecording (gate disabled, no GM,
+        // already-running). Best-effort: echo current state with a reason
+        // describing the failure path.
+        const reason = ok ? 'started-but-not-running' : this._lastBlockReason || 'blocked';
+        this._sendRecordingStatus(reason, correlationId);
+      }
+    } else if (msg.action === 'stop') {
+      const wasRecording = this.isRecording();
+      this.stopRecording();
+      this._sendRecordingStatus(wasRecording ? 'stopped' : 'already-stopped', correlationId);
+    } else {
+      console.warn(`${LOG_PREFIX} Unknown recordingControl action:`, msg.action);
+    }
+  }
+
+  /**
+   * Send the current recording state up to the sidecar. Called on every
+   * transition (toolbar click, API call, sidecar-driven control) plus snapshot
+   * sends on connect / queryState.
+   */
+  _sendRecordingStatus(reason, correlationId) {
+    const msg = { type: 'recordingStatus', recording: this.isRecording(), reason };
+    if (correlationId) msg.correlationId = correlationId;
+    this._send(msg);
   }
 
   _handleWhisper(payload) {
@@ -558,10 +612,12 @@ class MagiBridge {
   startRecording() {
     if (!game.user.isGM) {
       ui.notifications.warn('Only the GM can start video recording.');
+      this._lastBlockReason = 'blocked-no-gm';
       return false;
     }
     if (!game.settings.get(MODULE_ID, 'enableVideoCapture')) {
       ui.notifications.warn('Video capture is disabled in module settings. Enable it first under Configure Settings → Module Settings → Magi Bridge.');
+      this._lastBlockReason = 'blocked-gate-disabled';
       return false;
     }
     if (this.isRecording()) {
@@ -575,8 +631,10 @@ class MagiBridge {
     if (this.isRecording()) {
       ui.notifications.info('Video recording started.');
       ui.controls?.render();
+      this._sendRecordingStatus('started');
       return true;
     }
+    this._lastBlockReason = 'blocked-no-canvas';
     return false;
   }
 
@@ -591,6 +649,7 @@ class MagiBridge {
     this._disconnectVideo();
     ui.notifications.info('Video recording stopped.');
     ui.controls?.render();
+    this._sendRecordingStatus('stopped');
     return true;
   }
 

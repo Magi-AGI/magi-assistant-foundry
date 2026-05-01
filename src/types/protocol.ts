@@ -51,6 +51,15 @@ export interface PongMessage {
   type: 'pong';
 }
 
+export interface RecordingStatusMessage {
+  type: 'recordingStatus';
+  recording: boolean;
+  /** Why the state changed: 'started', 'stopped', 'blocked-no-gm', 'blocked-gate', 'blocked-no-canvas', 'snapshot' (sent on connect/queryState), etc. */
+  reason: string;
+  /** Echoed from a sidecar-driven recordingControl message, when applicable. */
+  correlationId?: string;
+}
+
 export type ModuleMessage =
   | GameReadyMessage
   | ChatMessageMessage
@@ -59,7 +68,8 @@ export type ModuleMessage =
   | CombatUpdateMessage
   | SceneChangeMessage
   | VideoChunkMessage
-  | PongMessage;
+  | PongMessage
+  | RecordingStatusMessage;
 
 // --- Messages from Sidecar → Foundry module ---
 
@@ -77,7 +87,15 @@ export interface PingMessage {
   type: 'ping';
 }
 
+export interface RecordingControlMessage {
+  type: 'recordingControl';
+  action: 'start' | 'stop';
+  /** Optional caller-supplied id; the browser echoes it back in the resulting recordingStatus so callers can correlate request/response. */
+  correlationId?: string;
+}
+
 export type SidecarMessage =
   | WhisperMessage
   | QueryStateMessage
-  | PingMessage;
+  | PingMessage
+  | RecordingControlMessage;
