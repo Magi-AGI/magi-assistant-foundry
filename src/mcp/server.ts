@@ -1,13 +1,19 @@
 /**
- * MCP server exposing Foundry game state via SSE transport.
- * Same pattern as magi-assistant-discord/src/mcp/server.ts.
+ * MCP server exposing Foundry game state via StreamableHTTP transport.
+ *
+ * Each MCP session gets its own StreamableHTTPServerTransport plus its own
+ * McpServer instance. The underlying SDK Server only supports a single
+ * transport per instance, so concurrent clients (Claude.ai + Discord bot)
+ * each need a fresh server. activeServers tracks them for live-event
+ * broadcasts via McpServerRegistry.
  */
 
 import * as http from 'http';
 import * as net from 'net';
 import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { registerResources } from './resources.js';
@@ -18,12 +24,13 @@ import type { RecordingStateStore } from '../foundry/recording-state.js';
 import type { VideoCaptureCoordinator } from '../video/capture.js';
 
 const MCP_HOST = '127.0.0.1';
+const MCP_PATH = '/mcp';
 
 let httpServer: http.Server | null = null;
 let activeSocketPath: string | null = null;
 
 interface Session {
-  transport: SSEServerTransport;
+  transport: StreamableHTTPServerTransport;
   mcpServer: McpServer;
 }
 
@@ -80,8 +87,8 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
 
   const mcpPort = config.mcpPort;
 
-  /** Build a fresh McpServer per SSE connection. The underlying Server only
-   * supports a single transport, so each client must get its own instance. */
+  /** Build a fresh McpServer per session. The underlying Server only supports
+   *  a single transport, so each client must get its own instance. */
   function createServerInstance(): McpServer {
     const instance = new McpServer(
       {
@@ -101,59 +108,80 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
   }
 
   httpServer = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+
+    if (url.pathname !== MCP_PATH) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
 
     const expectedToken = config.mcpAuthToken;
     const authHeader = req.headers.authorization;
-    const headerOk = authHeader === `Bearer ${expectedToken}`;
-    // Query token only accepted on GET /sse (EventSource can't send headers).
-    // POST /messages requires Authorization header to avoid token exposure in URLs.
-    const isGetSse = url.pathname === '/sse' && req.method === 'GET';
-    const queryTokenOk = isGetSse && url.searchParams.get('token') === expectedToken;
-    const authenticated = headerOk || queryTokenOk;
-
-    if (!authenticated) {
+    if (authHeader !== `Bearer ${expectedToken}`) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
       return;
     }
 
-    if (isGetSse) {
-      const transport = new SSEServerTransport('/messages', res);
-      const instance = createServerInstance();
-      sessions.set(transport.sessionId, { transport, mcpServer: instance });
-      activeServers.add(instance);
+    const sessionIdHeader = req.headers['mcp-session-id'];
+    const sessionId = typeof sessionIdHeader === 'string' ? sessionIdHeader : undefined;
 
-      // SDK SSEServerTransport sends no periodic data after the initial endpoint
-      // event. Without traffic, undici's 5-minute body timeout fires on the
-      // aggregator side and triggers a silent reconnect. Emit a comment frame
-      // every 25s to keep the stream warm.
-      const keepalive = setInterval(() => {
-        if (!res.writableEnded && !res.destroyed) {
-          try { res.write(': keepalive\n\n'); } catch { /* connection already gone */ }
-        }
-      }, 25_000);
-
-      res.on('close', () => {
-        clearInterval(keepalive);
-        sessions.delete(transport.sessionId);
-        activeServers.delete(instance);
-      });
-
-      await instance.server.connect(transport);
-    } else if (url.pathname === '/messages' && req.method === 'POST') {
-      const sessionId = url.searchParams.get('sessionId');
-      const session = sessionId ? sessions.get(sessionId) : undefined;
+    if (sessionId) {
+      const session = sessions.get(sessionId);
       if (!session) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid session' }));
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unknown session' }));
         return;
       }
+      try {
+        await session.transport.handleRequest(req, res);
+      } catch (err) {
+        logger.warn('MCP transport handleRequest error:', err);
+      }
+      return;
+    }
 
-      await session.transport.handlePostMessage(req, res);
-    } else {
-      res.writeHead(404);
-      res.end('Not found');
+    // No session header — only POST /mcp can initialize a new session.
+    if (req.method !== 'POST') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing Mcp-Session-Id header' }));
+      return;
+    }
+
+    const instance = createServerInstance();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sid) => {
+        sessions.set(sid, { transport, mcpServer: instance });
+        activeServers.add(instance);
+        logger.debug(`MCP session initialized: ${sid}`);
+      },
+      onsessionclosed: (sid) => {
+        sessions.delete(sid);
+        activeServers.delete(instance);
+        logger.debug(`MCP session closed: ${sid}`);
+      },
+    });
+
+    transport.onclose = (): void => {
+      const sid = transport.sessionId;
+      if (sid) sessions.delete(sid);
+      activeServers.delete(instance);
+    };
+
+    try {
+      await instance.server.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      logger.warn('MCP initialize failed:', err);
+      activeServers.delete(instance);
+      const sid = transport.sessionId;
+      if (sid) sessions.delete(sid);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Initialization failed' }));
+      }
     }
   });
 
@@ -176,11 +204,11 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
         logger.warn('Could not set socket permissions:', err);
       }
       activeSocketPath = socketPath;
-      logger.info(`MCP server listening on UDS ${socketPath} (mode 0600)`);
+      logger.info(`MCP server listening on UDS ${socketPath} (mode 0600), path ${MCP_PATH}`);
     });
   } else {
     httpServer.listen(mcpPort, MCP_HOST, () => {
-      logger.info(`MCP server listening on ${MCP_HOST}:${mcpPort}`);
+      logger.info(`MCP server listening on ${MCP_HOST}:${mcpPort}${MCP_PATH}`);
     });
   }
 
