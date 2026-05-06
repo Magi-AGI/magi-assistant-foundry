@@ -13,7 +13,7 @@
 
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '3300', 10);
 const MCP_PORT = parseInt(process.env.MCP_PORT ?? '3002', 10);
@@ -139,9 +139,8 @@ async function runTests(): Promise<void> {
 
   // Step 4: Connect MCP client and read resources
   console.log('\n4. Connecting MCP client...');
-  const sseUrl = new URL(`http://127.0.0.1:${MCP_PORT}/sse`);
-  sseUrl.searchParams.set('token', MCP_AUTH_TOKEN);
-  const transport = new SSEClientTransport(sseUrl, {
+  const mcpUrl = new URL(`http://127.0.0.1:${MCP_PORT}/mcp`);
+  const transport = new StreamableHTTPClientTransport(mcpUrl, {
     requestInit: {
       headers: { Authorization: `Bearer ${MCP_AUTH_TOKEN}` },
     },
