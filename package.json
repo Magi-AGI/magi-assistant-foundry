@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test:integration": "tsx scripts/integration-test.ts"
+    "test:integration": "tsx scripts/integration-test.ts",
+    "repro:leak": "node scripts/leak-repro/run.mjs"
   },
   "license": "MIT",
   "engines": {
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@types/node": "^22.13.4",
     "@types/ws": "^8.5.0",
+    "playwright": "^1.59.1",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }
