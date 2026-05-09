@@ -56,7 +56,6 @@ class MagiBridge {
     chunksEmitted: 0,
     chunksSent: 0,
     chunksDroppedNoWs: 0,
-    readersInFlight: 0,
     bytesEnqueued: 0,
     wsReconnects: 0,
     videoWsReconnects: 0,
@@ -309,19 +308,25 @@ class MagiBridge {
     }
   }
 
-  /** Send a video chunk on the dedicated video WS. Drops if unavailable. */
-  _sendVideo(msg) {
+  /**
+   * Send a video chunk Blob as a binary WebSocket frame. Drops if unavailable.
+   *
+   * Chunks are sent as raw binary (no base64 + JSON envelope). The previous
+   * envelope path allocated ~3× the chunk size in transient large strings
+   * per 5 s slice, which the Firefox GC promoted to old-gen faster than it
+   * could reclaim — see task #38 leak investigation.
+   */
+  _sendChunk(blob) {
     if (this.videoWs && this.videoWs.readyState === WebSocket.OPEN) {
-      const json = JSON.stringify(msg);
-      this.videoWs.send(json);
+      this.videoWs.send(blob);
       this._diagnostics.chunksSent++;
-      this._diagnostics.bytesEnqueued += json.length;
+      this._diagnostics.bytesEnqueued += blob.size;
     } else {
       this._diagnostics.chunksDroppedNoWs++;
     }
-    // No fallback to main WS — sending ~430KB video chunks on the game-state
-    // connection would reintroduce head-of-line blocking. Chunks are dropped
-    // until the video WS reconnects.
+    // No fallback to main WS — large binary chunks on the game-state connection
+    // would reintroduce head-of-line blocking. Chunks are dropped until the
+    // video WS reconnects.
   }
 
   // ─── Sidecar Message Handling ────────────────────────────
@@ -719,23 +724,7 @@ class MagiBridge {
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           this._diagnostics.chunksEmitted++;
-          this._diagnostics.readersInFlight++;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            try {
-              const base64 = /** @type {string} */ (reader.result).split(',')[1];
-              if (base64) {
-                this._sendVideo({
-                  type: 'videoChunk',
-                  data: base64,
-                  timestamp: new Date().toISOString(),
-                });
-              }
-            } finally {
-              this._diagnostics.readersInFlight--;
-            }
-          };
-          reader.readAsDataURL(event.data);
+          this._sendChunk(event.data);
         }
       };
 
@@ -803,7 +792,6 @@ class MagiBridge {
         emitted: this._diagnostics.chunksEmitted,
         sent: this._diagnostics.chunksSent,
         droppedNoWs: this._diagnostics.chunksDroppedNoWs,
-        readersInFlight: this._diagnostics.readersInFlight,
         bytesEnqueued: this._diagnostics.bytesEnqueued,
       },
       jsHeap: heap,

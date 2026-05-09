@@ -23,10 +23,8 @@ export class VideoCaptureCoordinator {
   private lastRotationTime = 0;
 
   /** Handle an incoming video chunk from the Foundry module. */
-  handleChunk(base64Data: string, timestamp: string): void {
+  handleChunk(buffer: Buffer, timestamp: string): void {
     try {
-      const buffer = Buffer.from(base64Data, 'base64');
-
       // Detect WebM header: if we see a new EBML header after the first chunk,
       // the browser was refreshed — rotate to a new file to avoid container corruption.
       if (this.outputStream && this.chunkCount > 0 && buffer.length >= 4 &&

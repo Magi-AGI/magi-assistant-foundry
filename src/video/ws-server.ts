@@ -11,14 +11,8 @@ import type { IncomingMessage } from 'http';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
 
-interface VideoChunkMessage {
-  type: 'videoChunk';
-  data: string;
-  timestamp: string;
-}
-
 export interface VideoWsServerEvents {
-  chunk: [data: string, timestamp: string];
+  chunk: [data: Buffer, timestamp: string];
   connected: [];
   disconnected: [];
 }
@@ -64,16 +58,21 @@ export class VideoWsServer extends EventEmitter<VideoWsServerEvents> {
       logger.info('Video WS: client connected');
       this.emit('connected');
 
-      ws.on('message', (data: Buffer | string) => {
+      ws.on('message', (data: Buffer, isBinary: boolean) => {
+        if (isBinary) {
+          // Binary frame = a video chunk. Use server receive time as timestamp;
+          // network transit is sub-second so this is close enough for chunk
+          // ordering and file naming, and avoids any browser-clock dependency.
+          this.emit('chunk', data, new Date().toISOString());
+          return;
+        }
         try {
-          const msg = JSON.parse(data.toString()) as VideoChunkMessage;
-          if (msg.type === 'videoChunk') {
-            this.emit('chunk', msg.data, msg.timestamp);
-          } else if ((msg as { type: string }).type === 'pong') {
+          const msg = JSON.parse(data.toString()) as { type: string };
+          if (msg.type === 'pong') {
             this.pongReceived = true;
           }
         } catch (err) {
-          logger.warn('Video WS: failed to parse message:', err);
+          logger.warn('Video WS: failed to parse text message:', err);
         }
       });
 

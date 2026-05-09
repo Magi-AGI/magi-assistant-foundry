@@ -55,7 +55,6 @@ const diag = {
   chunksEmitted: 0,
   chunksSent: 0,
   chunksDroppedNoWs: 0,
-  readersInFlight: 0,
   bytesEnqueued: 0,
   wsReconnects: 0,
 };
@@ -97,12 +96,11 @@ function scheduleReconnect() {
   reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
 }
 
-function sendVideo(msg) {
+function sendChunk(blob) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const json = JSON.stringify(msg);
-    ws.send(json);
+    ws.send(blob);
     diag.chunksSent++;
-    diag.bytesEnqueued += json.length;
+    diag.bytesEnqueued += blob.size;
   } else {
     diag.chunksDroppedNoWs++;
   }
@@ -119,23 +117,7 @@ const recorder = new MediaRecorder(captureStream, {
 recorder.ondataavailable = (event) => {
   if (event.data.size > 0) {
     diag.chunksEmitted++;
-    diag.readersInFlight++;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      try {
-        const base64 = reader.result.split(',')[1];
-        if (base64) {
-          sendVideo({
-            type: 'videoChunk',
-            data: base64,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      } finally {
-        diag.readersInFlight--;
-      }
-    };
-    reader.readAsDataURL(event.data);
+    sendChunk(event.data);
   }
 };
 recorder.start(TIMESLICE_MS);
@@ -161,7 +143,6 @@ function emitProbe() {
       emitted: diag.chunksEmitted,
       sent: diag.chunksSent,
       droppedNoWs: diag.chunksDroppedNoWs,
-      readersInFlight: diag.readersInFlight,
       bytesEnqueued: diag.bytesEnqueued,
     },
     jsHeap: heap,
