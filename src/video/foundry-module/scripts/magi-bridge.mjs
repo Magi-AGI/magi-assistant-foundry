@@ -46,6 +46,21 @@ class MagiBridge {
   /** @type {MediaStream|null} */
   captureStream = null;
 
+  /** @type {ReturnType<typeof setInterval>|null} */
+  _diagnosticsTimer = null;
+
+  // Counters for the leak investigation (BG Session 9, ~23 GB Firefox tab).
+  // Cumulative since module load; consumer computes deltas if needed.
+  _diagnostics = {
+    startTime: Date.now(),
+    chunksEmitted: 0,
+    chunksSent: 0,
+    chunksDroppedNoWs: 0,
+    bytesEnqueued: 0,
+    wsReconnects: 0,
+    videoWsReconnects: 0,
+  };
+
   // ─── Lifecycle ───────────────────────────────────────────
 
   init() {
@@ -86,6 +101,15 @@ class MagiBridge {
       type: String,
       default: 'ws://127.0.0.1:3301',
     });
+
+    game.settings.register(MODULE_ID, 'enableDiagnostics', {
+      name: game.i18n.localize('MAGI_BRIDGE.Settings.EnableDiagnostics.Name'),
+      hint: game.i18n.localize('MAGI_BRIDGE.Settings.EnableDiagnostics.Hint'),
+      scope: 'world',
+      config: true,
+      type: Boolean,
+      default: false,
+    });
   }
 
   ready() {
@@ -98,6 +122,12 @@ class MagiBridge {
     console.log(`${LOG_PREFIX} GM detected — connecting to sidecar`);
     this._connect();
     this._registerHooks();
+
+    if (game.settings.get(MODULE_ID, 'enableDiagnostics')) {
+      console.log(`${LOG_PREFIX} diagnostics enabled — emitting probe every 30s`);
+      this._diagnosticsTimer = setInterval(() => this._emitDiagnostics(), 30_000);
+      this._emitDiagnostics();
+    }
   }
 
   // ─── Game-State WebSocket Connection ───────────────────────
@@ -165,6 +195,7 @@ class MagiBridge {
 
   _scheduleReconnect() {
     if (this.reconnectTimer) return;
+    this._diagnostics.wsReconnects++;
     console.log(`${LOG_PREFIX} Reconnecting in ${this.reconnectDelay}ms...`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -186,6 +217,10 @@ class MagiBridge {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this._diagnosticsTimer) {
+      clearInterval(this._diagnosticsTimer);
+      this._diagnosticsTimer = null;
     }
     this._stopVideoCapture();
     this._disconnectVideo();
@@ -253,6 +288,7 @@ class MagiBridge {
 
   _scheduleVideoReconnect() {
     if (this.videoReconnectTimer) return;
+    this._diagnostics.videoWsReconnects++;
     console.log(`${LOG_PREFIX} Video WS reconnecting in ${this.videoReconnectDelay}ms...`);
     this.videoReconnectTimer = setTimeout(() => {
       this.videoReconnectTimer = null;
@@ -272,14 +308,25 @@ class MagiBridge {
     }
   }
 
-  /** Send a video chunk on the dedicated video WS. Drops if unavailable. */
-  _sendVideo(msg) {
+  /**
+   * Send a video chunk Blob as a binary WebSocket frame. Drops if unavailable.
+   *
+   * Chunks are sent as raw binary (no base64 + JSON envelope). The previous
+   * envelope path allocated ~3× the chunk size in transient large strings
+   * per 5 s slice, which the Firefox GC promoted to old-gen faster than it
+   * could reclaim — see task #38 leak investigation.
+   */
+  _sendChunk(blob) {
     if (this.videoWs && this.videoWs.readyState === WebSocket.OPEN) {
-      this.videoWs.send(JSON.stringify(msg));
+      this.videoWs.send(blob);
+      this._diagnostics.chunksSent++;
+      this._diagnostics.bytesEnqueued += blob.size;
+    } else {
+      this._diagnostics.chunksDroppedNoWs++;
     }
-    // No fallback to main WS — sending ~430KB video chunks on the game-state
-    // connection would reintroduce head-of-line blocking. Chunks are dropped
-    // until the video WS reconnects.
+    // No fallback to main WS — large binary chunks on the game-state connection
+    // would reintroduce head-of-line blocking. Chunks are dropped until the
+    // video WS reconnects.
   }
 
   // ─── Sidecar Message Handling ────────────────────────────
@@ -676,18 +723,8 @@ class MagiBridge {
 
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64 = /** @type {string} */ (reader.result).split(',')[1];
-            if (base64) {
-              this._sendVideo({
-                type: 'videoChunk',
-                data: base64,
-                timestamp: new Date().toISOString(),
-              });
-            }
-          };
-          reader.readAsDataURL(event.data);
+          this._diagnostics.chunksEmitted++;
+          this._sendChunk(event.data);
         }
       };
 
@@ -710,6 +747,57 @@ class MagiBridge {
       }
       this.captureStream = null;
     }
+  }
+
+  // ─── Diagnostics ────────────────────────────────────────
+  // Probe added for the BG Session 9 leak investigation. Cumulative counters
+  // since module load + current state of WS / recorder / captureStream. Logged
+  // to the browser console so Lake can copy the lines out of devtools after a
+  // session. performance.memory is Chrome-only; null on Firefox (rely on
+  // about:memory there).
+
+  _wsStateName(ws) {
+    if (!ws) return 'null';
+    switch (ws.readyState) {
+      case WebSocket.CONNECTING: return 'connecting';
+      case WebSocket.OPEN: return 'open';
+      case WebSocket.CLOSING: return 'closing';
+      case WebSocket.CLOSED: return 'closed';
+      default: return 'unknown';
+    }
+  }
+
+  _emitDiagnostics() {
+    const tracks = this.captureStream
+      ? this.captureStream.getTracks().map((t) => ({ kind: t.kind, readyState: t.readyState }))
+      : null;
+
+    const heap = (typeof performance !== 'undefined' && performance.memory)
+      ? {
+          used_mb: Math.round(performance.memory.usedJSHeapSize / 1024 / 1024),
+          total_mb: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024),
+          limit_mb: Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024),
+        }
+      : null;
+
+    const probe = {
+      ts: new Date().toISOString(),
+      uptime_s: Math.round((Date.now() - this._diagnostics.startTime) / 1000),
+      ws: { state: this._wsStateName(this.ws), bufferedAmount: this.ws?.bufferedAmount ?? 0 },
+      videoWs: { state: this._wsStateName(this.videoWs), bufferedAmount: this.videoWs?.bufferedAmount ?? 0 },
+      recorder: { state: this.mediaRecorder?.state ?? 'none' },
+      captureStream: tracks ? { active: this.captureStream.active, tracks } : null,
+      reconnects: { ws: this._diagnostics.wsReconnects, video: this._diagnostics.videoWsReconnects },
+      chunks: {
+        emitted: this._diagnostics.chunksEmitted,
+        sent: this._diagnostics.chunksSent,
+        droppedNoWs: this._diagnostics.chunksDroppedNoWs,
+        bytesEnqueued: this._diagnostics.bytesEnqueued,
+      },
+      jsHeap: heap,
+    };
+
+    console.log(`${LOG_PREFIX} diag`, probe);
   }
 }
 

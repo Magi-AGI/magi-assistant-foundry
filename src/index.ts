@@ -45,8 +45,9 @@ wsServer.on('message', (msg: ModuleMessage) => {
       store.applySceneChange(msg.scene);
       break;
     case 'videoChunk':
-      // Backward compat: old Foundry modules still send video on the main port.
-      // Process it, but warn so the user knows to update the module.
+      // Backward compat: old Foundry modules sent JSON-enveloped base64 chunks
+      // on the game-state port. Decode here so capture.handleChunk stays
+      // Buffer-only. Warn the user to update the module.
       if (!videoChunkOnMainPortWarned) {
         logger.warn(
           `Video chunk received on game-state port ${config.wsPort}. ` +
@@ -55,7 +56,7 @@ wsServer.on('message', (msg: ModuleMessage) => {
         );
         videoChunkOnMainPortWarned = true;
       }
-      videoCapture.handleChunk(msg.data, msg.timestamp);
+      videoCapture.handleChunk(Buffer.from(msg.data, 'base64'), msg.timestamp);
       break;
     case 'recordingStatus':
       recordingState.apply(msg);
@@ -70,7 +71,7 @@ wsServer.on('message', (msg: ModuleMessage) => {
 
 // --- Wire video WebSocket events → video capture ---
 
-videoWsServer.on('chunk', (data: string, timestamp: string) => {
+videoWsServer.on('chunk', (data: Buffer, timestamp: string) => {
   videoCapture.handleChunk(data, timestamp);
 });
 

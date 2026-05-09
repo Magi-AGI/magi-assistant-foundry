@@ -16,6 +16,10 @@
       "VideoSidecarUrl": {
         "Name": "Video WebSocket URL",
         "Hint": "Dedicated WebSocket URL for video traffic (separate from game state to avoid blocking)"
+      },
+      "EnableDiagnostics": {
+        "Name": "Enable Diagnostics",
+        "Hint": "Log periodic memory and WebSocket state probes to the browser console every 30s (for investigating leaks). Default off."
       }
     },
     "Connected": "Connected to Magi sidecar",

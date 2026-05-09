@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>magi-bridge leak repro</title>
+<style>
+  body { margin: 0; background: #111; color: #eee; font-family: monospace; }
+  #board { display: block; }
+  #status { position: fixed; top: 8px; left: 8px; background: rgba(0,0,0,0.6); padding: 8px; }
+</style>
+</head>
+<body>
+<canvas id="board" width="1920" height="1080"></canvas>
+<div id="status">starting…</div>
+<script type="module">
+// Standalone reproduction of the magi-bridge video pipeline.
+// Mirrors the canvas → captureStream(2) → MediaRecorder → FileReader →
+// WebSocket path from src/video/foundry-module/scripts/magi-bridge.mjs,
+// without any Foundry runtime. If this leaks, the cause is in the pipeline
+// itself; if it doesn't, the cause is something Foundry-specific.
+
+const WS_URL = 'ws://127.0.0.1:4081/';
+const FPS_CAPTURE = 2;
+const TIMESLICE_MS = 5000;
+const VIDEO_BITS = 500_000;
+
+const status = document.getElementById('status');
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+// Foundry-ish animation: the goal is a continuously-changing canvas so the
+// captureStream actually has work to do. Pattern is irrelevant; motion is the
+// point. Runs at full requestAnimationFrame rate; captureStream samples 2/s.
+let frame = 0;
+function draw() {
+  frame++;
+  ctx.fillStyle = `hsl(${frame % 360}, 50%, 15%)`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (let i = 0; i < 80; i++) {
+    const x = (Math.sin(frame * 0.01 + i) * 0.5 + 0.5) * canvas.width;
+    const y = (Math.cos(frame * 0.013 + i * 0.7) * 0.5 + 0.5) * canvas.height;
+    ctx.fillStyle = `hsl(${(frame + i * 7) % 360}, 70%, 60%)`;
+    ctx.fillRect(x - 30, y - 30, 60, 60);
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = '40px monospace';
+  ctx.fillText(`frame ${frame}`, 40, 80);
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ─── Diagnostics counters (mirror magi-bridge schema) ─────────────────────
+const diag = {
+  startTime: Date.now(),
+  chunksEmitted: 0,
+  chunksSent: 0,
+  chunksDroppedNoWs: 0,
+  bytesEnqueued: 0,
+  wsReconnects: 0,
+};
+
+let ws = null;
+let reconnectDelay = 1000;
+const MAX_RECONNECT_DELAY = 30_000;
+let reconnectTimer = null;
+
+function connect() {
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch (err) {
+    console.error('repro | ws create failed', err);
+    scheduleReconnect();
+    return;
+  }
+  ws.onopen = () => {
+    console.log('repro | ws open');
+    reconnectDelay = 1000;
+    status.textContent = 'ws: open';
+  };
+  ws.onclose = () => {
+    console.log('repro | ws close');
+    ws = null;
+    status.textContent = 'ws: closed';
+    scheduleReconnect();
+  };
+  ws.onerror = (e) => console.error('repro | ws error', e);
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  diag.wsReconnects++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+}
+
+function sendChunk(blob) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(blob);
+    diag.chunksSent++;
+    diag.bytesEnqueued += blob.size;
+  } else {
+    diag.chunksDroppedNoWs++;
+  }
+}
+
+connect();
+
+// ─── Capture pipeline (mirrors magi-bridge.mjs:_startVideoCapture) ────────
+const captureStream = canvas.captureStream(FPS_CAPTURE);
+const recorder = new MediaRecorder(captureStream, {
+  mimeType: 'video/webm;codecs=vp8',
+  videoBitsPerSecond: VIDEO_BITS,
+});
+recorder.ondataavailable = (event) => {
+  if (event.data.size > 0) {
+    diag.chunksEmitted++;
+    sendChunk(event.data);
+  }
+};
+recorder.start(TIMESLICE_MS);
+
+// ─── Probe ────────────────────────────────────────────────────────────────
+function emitProbe() {
+  const tracks = captureStream.getTracks().map((t) => ({ kind: t.kind, readyState: t.readyState }));
+  const heap = (typeof performance !== 'undefined' && performance.memory)
+    ? {
+        used_mb: Math.round(performance.memory.usedJSHeapSize / 1024 / 1024),
+        total_mb: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024),
+        limit_mb: Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024),
+      }
+    : null;
+  const probe = {
+    ts: new Date().toISOString(),
+    uptime_s: Math.round((Date.now() - diag.startTime) / 1000),
+    ws: { state: wsStateName(ws), bufferedAmount: ws ? ws.bufferedAmount : 0 },
+    recorder: { state: recorder.state },
+    captureStream: { active: captureStream.active, tracks },
+    reconnects: { ws: diag.wsReconnects },
+    chunks: {
+      emitted: diag.chunksEmitted,
+      sent: diag.chunksSent,
+      droppedNoWs: diag.chunksDroppedNoWs,
+      bytesEnqueued: diag.bytesEnqueued,
+    },
+    jsHeap: heap,
+  };
+  // Single-line JSON so run.mjs can grep it out of the console stream.
+  console.log('REPRO_DIAG ' + JSON.stringify(probe));
+}
+function wsStateName(w) {
+  if (!w) return 'null';
+  switch (w.readyState) {
+    case 0: return 'connecting';
+    case 1: return 'open';
+    case 2: return 'closing';
+    case 3: return 'closed';
+    default: return 'unknown';
+  }
+}
+setInterval(emitProbe, 30_000);
+emitProbe();
+</script>
+</body>
+</html>
