@@ -6,7 +6,7 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
 ## Tech Stack
 - TypeScript + Node.js
 - WebSocket (ws) for Foundry VTT module communication
-- @modelcontextprotocol/sdk for MCP server (SSE transport)
+- @modelcontextprotocol/sdk for MCP server (StreamableHTTP transport at `/mcp`)
 - Zod for MCP tool input schemas
 
 ## Build & Run
@@ -29,12 +29,13 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `fate-parser.ts` — Fate roll parsing, ladder labels
   - `types.ts` — FoundryScene, FoundryToken, FoundryCombat, FoundryCombatant
 - `src/mcp/` — MCP server
-  - `server.ts` — SSE transport, Bearer token auth, UDS support
+  - `server.ts` — StreamableHTTP transport at `/mcp`, Bearer token auth, UDS support
   - `resources.ts` — game://state, actors, scene, combat, chat/recent, video/status
   - `tools.ts` — send_whisper, get_actor_details, search_chat, get_fate_ladder
   - `live-events.ts` — state change → MCP resource update notifications
 - `src/video/` — Video capture
-  - `capture.ts` — VideoCaptureCoordinator (base64 → WebM files)
+  - `capture.ts` — VideoCaptureCoordinator (binary WebM chunks → files)
+  - `ws-server.ts` — dedicated video WebSocket server (127.0.0.1, `VIDEO_WS_PORT` env or `wsPort + 1`, default 3301; `?token=`), binary chunk frames
   - `foundry-module/` — Foundry VTT module (browser JS, no build step)
     - `module.json` — Foundry module manifest (id: magi-bridge, v13)
     - `scripts/magi-bridge.mjs` — MagiBridge class (WS, hooks, serializers, video)
@@ -52,7 +53,8 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
 
 ## Key Conventions
 - WebSocket protocol uses typed JSON messages (ModuleMessage / SidecarMessage)
-- Token auth on both WS (?token=) and MCP (Bearer / ?token= for SSE)
+- Token auth: game-state WS and video WS use `?token=`; MCP `/mcp` uses an `Authorization` bearer-token header (token value redacted)
+- Video chunks arrive as binary WS frames on the video port; legacy modules that send JSON-enveloped base64 `videoChunk` messages on the game-state port are still decoded (`src/index.ts`) with a one-time warning
 - Single active WS connection (new replaces old — reconnect-friendly)
 - Ping/pong heartbeat: 15s interval, 10s timeout
 - Chat ring buffer: 200 messages max

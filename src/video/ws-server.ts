@@ -1,7 +1,7 @@
 /**
  * Dedicated WebSocket server for video chunk traffic.
  * Runs on a separate port from the game-state WS server so that
- * large video payloads (~430KB base64 every 5s) don't cause
+ * large video payloads (~320KB binary every 5s) don't cause
  * head-of-line blocking on game-state events.
  */
 

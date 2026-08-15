@@ -1,6 +1,8 @@
 /**
- * Video capture coordinator — receives base64-encoded WebM chunks from Foundry module,
- * decodes them, and writes to files.
+ * Video capture coordinator — receives decoded WebM chunks as Buffers and
+ * writes them to files. Chunks arrive as binary frames on the dedicated video
+ * WS; legacy JSON-enveloped base64 chunks are decoded upstream in index.ts, so
+ * this class is Buffer-only.
  */
 
 import * as fs from 'fs';
@@ -87,7 +89,7 @@ export class VideoCaptureCoordinator {
     this.backpressured = false;
 
     // flags: 'w' (not 'a') — each session gets a fresh file to produce valid WebM.
-    // highWaterMark: 1 MB — one base64-decoded chunk is ~320 KB, exceeds the
+    // highWaterMark: 1 MB — one decoded WebM chunk is ~320 KB, exceeds the
     // 16 KB default and trips spurious backpressure warnings every 5 s.
     this.outputStream = fs.createWriteStream(this.filePath, { flags: 'w', highWaterMark: 1024 * 1024 });
     this.outputStream.on('error', (err) => {
