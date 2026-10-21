@@ -19,4 +19,9 @@ export type {
   QueryStateMessage,
   PingMessage,
   RecordingControlMessage,
+  TableCommandMessage,
+  TableEvent,
+  TableEventMessage,
+  TableOp,
+  Cell,
 } from './protocol.js';

@@ -20,6 +20,14 @@
       "EnableDiagnostics": {
         "Name": "Enable Diagnostics",
         "Hint": "Log periodic memory and WebSocket state probes to the browser console every 30s (for investigating leaks). Default off."
+      },
+      "DirectorRunsTable": {
+        "Name": "Director runs the table",
+        "Hint": "Let the Magi Director draw scenes, place and move tokens, mark the fallen, narrate and whisper, and create users for the people it seats, without asking each time. Speaking or rolling as an existing actor still asks unless the sidecar runs autonomously. Default off."
+      },
+      "BridgeUser": {
+        "Name": "Bridge user",
+        "Hint": "Only this user's browser connects to the sidecar (e.g. a headless Gamemaster). Leave empty to let any GM connect. Set it when an assistant GM also plays, so their browser does not take over the connection."
       }
     },
     "Connected": "Connected to Magi sidecar",

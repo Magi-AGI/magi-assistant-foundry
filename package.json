@@ -1,7 +1,7 @@
 {
   "name": "magi-assistant-foundry",
   "version": "0.1.0",
-  "description": "Foundry VTT bridge sidecar — captures game state and video for AI GM training data via MCP.",
+  "description": "Foundry VTT bridge sidecar \u2014 captures game state and video for AI GM training data via MCP.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -9,7 +9,8 @@
     "dev": "tsx src/index.ts",
     "test:integration": "tsx scripts/integration-test.ts",
     "test:director": "tsx scripts/director-test.ts",
-    "repro:leak": "node scripts/leak-repro/run.mjs"
+    "repro:leak": "node scripts/leak-repro/run.mjs",
+    "test:table": "tsx scripts/table-test.ts"
   },
   "license": "MIT",
   "engines": {

@@ -29,12 +29,13 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `fate-parser.ts` — Fate roll parsing, ladder labels
   - `action-results.ts` — correlates Director actions with the module's `actionResult` after the GM decides
   - `spotlight.ts` — per-character share of recent chat and rolls
+  - `table-events.ts` — numbered buffer of people's token drags and chat at the Director's table
   - `types.ts` — FoundryScene, FoundryToken, FoundryCombat, FoundryCombatant
 - `src/mcp/` — MCP server
   - `server.ts` — StreamableHTTP transport at `/mcp`, Bearer token auth, UDS support
   - `resources.ts` — game://state, actors, scene, combat, chat/recent, video/status
   - `tools.ts` — send_whisper, get_actor_details, search_chat, get_fate_ladder
-  - `director-tools.ts` — AI Director: post_as_actor, roll_for_actor (GM confirms in Foundry unless `DIRECTOR_AUTONOMOUS=true`), get_spotlight, director_status
+  - `director-tools.ts` — AI Director: post_as_actor, roll_for_actor (GM confirms in Foundry unless `DIRECTOR_AUTONOMOUS=true`), get_spotlight, director_status; table_apply, table_events (the Director runs the table, if the GM's "Director runs the table" setting is on)
   - `live-events.ts` — state change → MCP resource update notifications
 - `src/video/` — Video capture
   - `capture.ts` — VideoCaptureCoordinator (binary WebM chunks → files)
@@ -42,11 +43,15 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `foundry-module/` — Foundry VTT module (browser JS, no build step)
     - `module.json` — Foundry module manifest (id: magi-bridge, v13)
     - `scripts/magi-bridge.mjs` — MagiBridge class (WS, hooks, serializers, video)
+    - `scripts/magi-table.mjs` — MagiTable: applies `tableCommand` ops (scenes, tokens, drawings, chat, users), reports `tableEvent`s
     - `lang/en.json` — localization strings
 - `scripts/`
   - `install-module.sh` — symlink module into Foundry Data/modules
   - `integration-test.ts` — automated end-to-end test
   - `director-test.ts` — Director tools end to end against a fake module (`npm run test:director`, sidecar running)
+  - `table-test.ts` — table_apply / table_events end to end against a fake module (`npm run test:table`, sidecar running)
+  - `headless-gm.mjs` — headless Chromium GM for a server nobody sits at (launches the world, joins, configures the module)
+- `Dockerfile` — one image (Playwright base) for the sidecar and the headless GM
 
 ## Architecture
 - Foundry v13 has NO server-side module scripts — everything runs in GM's browser

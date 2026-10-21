@@ -7,6 +7,7 @@ import { FoundryWsServer } from './foundry/ws-server.js';
 import { GameStateStore } from './foundry/game-state-store.js';
 import { RecordingStateStore } from './foundry/recording-state.js';
 import { ActionResults } from './foundry/action-results.js';
+import { TableEvents } from './foundry/table-events.js';
 import { startMcpServer, stopMcpServer, getMcpServerRegistry } from './mcp/server.js';
 import { wireLiveEvents } from './mcp/live-events.js';
 import { VideoCaptureCoordinator } from './video/capture.js';
@@ -18,6 +19,7 @@ const config = getConfig();
 const store = new GameStateStore();
 const recordingState = new RecordingStateStore();
 const actionResults = new ActionResults();
+const tableEvents = new TableEvents();
 const wsServer = new FoundryWsServer();
 const videoWsServer = new VideoWsServer();
 const videoCapture = new VideoCaptureCoordinator();
@@ -65,6 +67,9 @@ wsServer.on('message', (msg: ModuleMessage) => {
       break;
     case 'actionResult':
       actionResults.apply(msg);
+      break;
+    case 'tableEvent':
+      tableEvents.push(msg.event);
       break;
     case 'pong':
       wsServer.handlePong();
@@ -139,7 +144,7 @@ async function main(): Promise<void> {
   wsServer.start();
   videoWsServer.start();
 
-  await startMcpServer(store, wsServer, videoCapture, recordingState, actionResults);
+  await startMcpServer(store, wsServer, videoCapture, recordingState, actionResults, tableEvents);
 
   // Wire live events once MCP server is up
   const registry = getMcpServerRegistry();
