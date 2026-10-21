@@ -9,6 +9,8 @@ import type { ChatMessageRecord } from './game-state.js';
 export interface GameReadyMessage {
   type: 'gameReady';
   worldId?: string;
+  /** Foundry game system id (game.system.id). */
+  gameSystem?: string;
   actors: Record<string, FateActor>;
   scene: FoundryScene | null;
   combat: FoundryCombat | null;
@@ -60,6 +62,15 @@ export interface RecordingStatusMessage {
   correlationId?: string;
 }
 
+/** The outcome of a Director action (postAsActor / rollForActor) after the GM's decision. */
+export interface ActionResultMessage {
+  type: 'actionResult';
+  correlationId: string;
+  ok: boolean;
+  /** 'posted', 'rolled', 'declined-by-gm', 'no-actor', 'error: …' */
+  detail: string;
+}
+
 export type ModuleMessage =
   | GameReadyMessage
   | ChatMessageMessage
@@ -69,7 +80,8 @@ export type ModuleMessage =
   | SceneChangeMessage
   | VideoChunkMessage
   | PongMessage
-  | RecordingStatusMessage;
+  | RecordingStatusMessage
+  | ActionResultMessage;
 
 // --- Messages from Sidecar → Foundry module ---
 
@@ -94,8 +106,33 @@ export interface RecordingControlMessage {
   correlationId?: string;
 }
 
+/**
+ * AI Director: speak as an actor (a simulated player's character, or an NPC).
+ * Unless the sidecar runs with DIRECTOR_AUTONOMOUS=true, the module asks the GM
+ * to approve this exact text before posting it.
+ */
+export interface PostAsActorMessage {
+  type: 'postAsActor';
+  actorId: string;
+  content: string;
+  correlationId: string;
+  requireConfirm: boolean;
+}
+
+/** AI Director: roll for an actor, with the same GM confirmation. */
+export interface RollForActorMessage {
+  type: 'rollForActor';
+  actorId: string;
+  formula: string;
+  flavor?: string;
+  correlationId: string;
+  requireConfirm: boolean;
+}
+
 export type SidecarMessage =
   | WhisperMessage
+  | PostAsActorMessage
+  | RollForActorMessage
   | QueryStateMessage
   | PingMessage
   | RecordingControlMessage;

@@ -346,6 +346,10 @@ class MagiBridge {
       case 'recordingControl':
         this._handleRecordingControl(msg);
         break;
+      case 'postAsActor':
+      case 'rollForActor':
+        this._handleDirectorAction(msg);
+        break;
       default:
         console.warn(`${LOG_PREFIX} Unknown sidecar message:`, msg.type);
     }
@@ -395,6 +399,48 @@ class MagiBridge {
     this._send(msg);
   }
 
+  // ─── AI Director actions ─────────────────────────────────
+
+  /**
+   * Speak or roll as an actor for the AI Director. In suggest mode (the
+   * default) the GM sees the exact text or formula and approves or declines
+   * it; the result goes back to the sidecar either way.
+   */
+  async _handleDirectorAction(msg) {
+    const reply = (ok, detail) => this._send({ type: 'actionResult', correlationId: msg.correlationId, ok, detail });
+    try {
+      if (!game.user.isGM) return reply(false, 'error: the connected client is not the GM');
+      const actor = game.actors.get(msg.actorId);
+      if (!actor) return reply(false, 'no-actor');
+      const speaker = ChatMessage.getSpeaker({ actor });
+      const what = msg.type === 'postAsActor'
+        ? `<p><b>${foundry.utils.escapeHTML(actor.name)}</b> says:</p><blockquote>${foundry.utils.escapeHTML(msg.content)}</blockquote>`
+        : `<p>Roll <code>${foundry.utils.escapeHTML(msg.formula)}</code> for <b>${foundry.utils.escapeHTML(actor.name)}</b>`
+          + `${msg.flavor ? ` (${foundry.utils.escapeHTML(msg.flavor)})` : ''}?</p>`;
+      if (msg.requireConfirm) {
+        const approved = await this._confirm('Magi Director', what);
+        if (!approved) return reply(false, 'declined-by-gm');
+      }
+      if (msg.type === 'postAsActor') {
+        await ChatMessage.create({ content: foundry.utils.escapeHTML(msg.content), speaker, flags: { 'magi-bridge': { director: true } } });
+        return reply(true, 'posted');
+      }
+      const roll = await new Roll(msg.formula, actor.getRollData?.() ?? {}).evaluate();
+      await roll.toMessage({ speaker, flavor: msg.flavor ?? '', flags: { 'magi-bridge': { director: true } } });
+      return reply(true, `rolled ${roll.formula} = ${roll.total}`);
+    } catch (err) {
+      return reply(false, `error: ${err?.message ?? err}`);
+    }
+  }
+
+  async _confirm(title, content) {
+    const DialogV2 = foundry.applications?.api?.DialogV2;
+    if (DialogV2?.confirm) {
+      return !!(await DialogV2.confirm({ window: { title }, content, rejectClose: false }));
+    }
+    return !!(await Dialog.confirm({ title, content }));
+  }
+
   _handleWhisper(payload) {
     const content = payload.title
       ? `<h3>${payload.title}</h3>${payload.content}`
@@ -432,6 +478,7 @@ class MagiBridge {
     this._send({
       type: 'gameReady',
       worldId: game.world?.id ?? '',
+      gameSystem: game.system?.id ?? '',
       actors,
       scene,
       combat,
@@ -498,17 +545,47 @@ class MagiBridge {
       }
     }
 
+    const d20 = this._serializeD20(actor);
     return {
       id: actor.id,
       name: actor.name,
       type: actor.type,
       img: actor.img ?? '',
+      system: game.system?.id ?? '',
+      playerOwned: !!actor.hasPlayerOwner,
+      ...(d20 ? { d20 } : {}),
       aspects,
       skills,
       stunts,
       tracks,
       fatePoints: sys.fatePoints?.current ?? sys.fatePoints ?? 0,
       refresh: sys.fatePoints?.refresh ?? sys.refresh ?? 0,
+    };
+  }
+
+  /** HP, AC, level and skill totals for dnd5e and pf2e actors; null for other systems. */
+  _serializeD20(actor) {
+    const id = game.system?.id;
+    if (id !== 'dnd5e' && id !== 'pf2e') return null;
+    const sys = actor.system ?? {};
+    const attr = sys.attributes ?? {};
+    const skills = {};
+    if (id === 'dnd5e') {
+      for (const [key, sk] of Object.entries(sys.skills ?? {})) {
+        skills[CONFIG.DND5E?.skills?.[key]?.label?.toLowerCase?.() ?? key] = sk?.total ?? sk?.mod ?? 0;
+      }
+    } else {
+      for (const [key, sk] of Object.entries(actor.skills ?? {})) {
+        skills[sk?.label?.toLowerCase?.() ?? key] = sk?.check?.mod ?? sk?.mod ?? 0;
+      }
+    }
+    const classes = actor.items?.filter?.((i) => i.type === 'class').map((i) => `${i.name} ${i.system?.levels ?? ''}`.trim()) ?? [];
+    return {
+      hp: { value: attr.hp?.value ?? 0, max: attr.hp?.max ?? 0 },
+      ac: attr.ac?.value ?? 0,
+      level: sys.details?.level?.value ?? sys.details?.level ?? actor.level ?? 0,
+      summary: classes.join(', ') || (sys.details?.ancestry?.name ?? ''),
+      skills,
     };
   }
 

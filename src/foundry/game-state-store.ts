@@ -24,6 +24,7 @@ export interface GameStateStoreEvents {
 export class GameStateStore extends EventEmitter<GameStateStoreEvents> {
   private state: GameState = {
     worldId: null,
+    gameSystem: null,
     actors: new Map(),
     scene: null,
     combat: null,
@@ -38,6 +39,7 @@ export class GameStateStore extends EventEmitter<GameStateStoreEvents> {
   /** Replace entire state from a gameReady payload. */
   applyGameReady(payload: {
     worldId?: string;
+    gameSystem?: string;
     actors: Record<string, FateActor>;
     scene: FoundryScene | null;
     combat: FoundryCombat | null;
@@ -52,6 +54,7 @@ export class GameStateStore extends EventEmitter<GameStateStoreEvents> {
     }
 
     this.state.worldId = incomingWorldId;
+    this.state.gameSystem = payload.gameSystem ?? null;
     this.state.actors = new Map(Object.entries(payload.actors));
     this.state.scene = payload.scene;
     this.state.combat = payload.combat;

@@ -6,6 +6,7 @@ import { logger } from './logger.js';
 import { FoundryWsServer } from './foundry/ws-server.js';
 import { GameStateStore } from './foundry/game-state-store.js';
 import { RecordingStateStore } from './foundry/recording-state.js';
+import { ActionResults } from './foundry/action-results.js';
 import { startMcpServer, stopMcpServer, getMcpServerRegistry } from './mcp/server.js';
 import { wireLiveEvents } from './mcp/live-events.js';
 import { VideoCaptureCoordinator } from './video/capture.js';
@@ -16,6 +17,7 @@ const config = getConfig();
 
 const store = new GameStateStore();
 const recordingState = new RecordingStateStore();
+const actionResults = new ActionResults();
 const wsServer = new FoundryWsServer();
 const videoWsServer = new VideoWsServer();
 const videoCapture = new VideoCaptureCoordinator();
@@ -61,6 +63,9 @@ wsServer.on('message', (msg: ModuleMessage) => {
     case 'recordingStatus':
       recordingState.apply(msg);
       break;
+    case 'actionResult':
+      actionResults.apply(msg);
+      break;
     case 'pong':
       wsServer.handlePong();
       break;
@@ -84,6 +89,7 @@ videoWsServer.on('disconnected', () => {
 wsServer.on('disconnected', () => {
   store.markDisconnected();
   recordingState.markDisconnected();
+  actionResults.cancelAll('module disconnected before the GM decided');
 });
 
 // --- Graceful shutdown ---
@@ -133,7 +139,7 @@ async function main(): Promise<void> {
   wsServer.start();
   videoWsServer.start();
 
-  await startMcpServer(store, wsServer, videoCapture, recordingState);
+  await startMcpServer(store, wsServer, videoCapture, recordingState, actionResults);
 
   // Wire live events once MCP server is up
   const registry = getMcpServerRegistry();

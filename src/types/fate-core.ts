@@ -25,6 +25,17 @@ export interface FateTrack {
   value: boolean[];
 }
 
+/** The fields the AI Director reads from d20-system actors (dnd5e, pf2e). */
+export interface D20Stats {
+  hp: { value: number; max: number };
+  ac: number;
+  level: number;
+  /** Class / ancestry summary, e.g. "Rogue 3". */
+  summary: string;
+  /** Skill key → total modifier. */
+  skills: Record<string, number>;
+}
+
 export interface FateActor {
   id: string;
   name: string;
@@ -36,6 +47,12 @@ export interface FateActor {
   tracks: FateTrack[];
   fatePoints: number;
   refresh: number;
+  /** Foundry game system id (fate-core-official, dnd5e, pf2e, …). Absent from older modules. */
+  system?: string;
+  /** Present for d20 systems; the Fate fields above are then empty. */
+  d20?: D20Stats;
+  /** True when a player (not only the GM) owns this actor. */
+  playerOwned?: boolean;
 }
 
 export interface FateRollResult {

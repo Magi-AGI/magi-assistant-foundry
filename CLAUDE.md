@@ -27,11 +27,14 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `ws-server.ts` — WebSocket server (127.0.0.1:3300), token auth, ping/pong
   - `game-state-store.ts` — in-memory cache, EventEmitter for state changes
   - `fate-parser.ts` — Fate roll parsing, ladder labels
+  - `action-results.ts` — correlates Director actions with the module's `actionResult` after the GM decides
+  - `spotlight.ts` — per-character share of recent chat and rolls
   - `types.ts` — FoundryScene, FoundryToken, FoundryCombat, FoundryCombatant
 - `src/mcp/` — MCP server
   - `server.ts` — StreamableHTTP transport at `/mcp`, Bearer token auth, UDS support
   - `resources.ts` — game://state, actors, scene, combat, chat/recent, video/status
   - `tools.ts` — send_whisper, get_actor_details, search_chat, get_fate_ladder
+  - `director-tools.ts` — AI Director: post_as_actor, roll_for_actor (GM confirms in Foundry unless `DIRECTOR_AUTONOMOUS=true`), get_spotlight, director_status
   - `live-events.ts` — state change → MCP resource update notifications
 - `src/video/` — Video capture
   - `capture.ts` — VideoCaptureCoordinator (binary WebM chunks → files)
@@ -43,6 +46,7 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
 - `scripts/`
   - `install-module.sh` — symlink module into Foundry Data/modules
   - `integration-test.ts` — automated end-to-end test
+  - `director-test.ts` — Director tools end to end against a fake module (`npm run test:director`, sidecar running)
 
 ## Architecture
 - Foundry v13 has NO server-side module scripts — everything runs in GM's browser
@@ -59,3 +63,5 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
 - Ping/pong heartbeat: 15s interval, 10s timeout
 - Chat ring buffer: 200 messages max
 - Fate Core actor data uses UUID-keyed objects, not arrays
+- Systems: Fate Core fields as before; for `dnd5e` and `pf2e` the module adds a `d20` block (HP, AC, level, skill totals) and `gameReady.gameSystem`
+- AI Director actions are suggest mode by default: the module shows the GM the exact text or formula in a confirm dialog, then replies `actionResult` (posted / rolled / declined-by-gm)

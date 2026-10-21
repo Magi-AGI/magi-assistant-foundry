@@ -25,6 +25,8 @@ export interface ChatMessageRecord {
 
 export interface GameState {
   worldId: string | null;
+  /** Foundry game system id, e.g. dnd5e. Null until a module that reports it connects. */
+  gameSystem: string | null;
   actors: Map<string, FateActor>;
   scene: FoundryScene | null;
   combat: FoundryCombat | null;
