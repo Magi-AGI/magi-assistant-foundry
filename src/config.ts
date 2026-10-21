@@ -14,6 +14,11 @@ export interface FoundryConfig {
   videoDir: string;
   /** Root of the Foundry VTT Data directory (for image enumeration). */
   foundryDataDir: string;
+  /**
+   * AI Director: post and roll as actors without asking the GM each time.
+   * Off by default; the GM confirms every action in Foundry (suggest mode).
+   */
+  directorAutonomous: boolean;
 }
 
 let _config: FoundryConfig | null = null;
@@ -39,6 +44,7 @@ export function getConfig(): FoundryConfig {
     mcpAuthToken,
     videoDir: process.env.VIDEO_DIR ?? './data/video',
     foundryDataDir: process.env.FOUNDRY_DATA_DIR ?? '',
+    directorAutonomous: process.env.DIRECTOR_AUTONOMOUS === 'true',
   };
 
   return _config;
