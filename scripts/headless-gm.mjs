@@ -17,7 +17,7 @@
  * Then it watches the page and starts over if Foundry restarts or the page dies.
  *
  * Environment:
- *   FOUNDRY_URL            http://127.0.0.1:30000
+ *   FOUNDRY_URL            http://127.0.0.1:30000 (https:// too; a self-signed certificate is accepted)
  *   FOUNDRY_WORLD          world id to launch (default magi-director)
  *   FOUNDRY_ADMIN_KEY      Foundry's admin password, for /auth and /setup
  *   FOUNDRY_LICENSE_KEY    only used if Foundry asks for a key
@@ -178,7 +178,9 @@ async function reach(page) {
 async function main() {
   const browser = await chromium.launch({ headless: true });
   for (;;) {
-    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    // Foundry may serve HTTPS with a self-signed certificate (a public magi-dev table);
+    // this browser only ever talks to its own server.
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, ignoreHTTPSErrors: true });
     page.on('console', (m) => { if (m.text().includes('Magi Bridge')) log('browser:', m.text()); });
     try {
       await reach(page);
