@@ -16,13 +16,11 @@ It has two parts:
   [MCP](https://modelcontextprotocol.io) server: resources to read, tools to
   call.
 
-> **Status.** The Director tools (`post_as_actor`, `roll_for_actor`,
-> `get_spotlight`, `director_status`) and the dnd5e / pf2e actor data pass the
-> scripted end-to-end test against a fake module, but **have not yet been
-> tested in a real Foundry world.** Magi Server also does not call the sidecar
-> yet: its `foundry` adapter, which would carry an approved Director action to
-> these MCP tools, is a known gap (see [Magi Server](#how-it-talks-to-magi-server)
-> below). Treat this as a prototype.
+> **Status.** The Director tools, the table the Director runs (`table_apply`,
+> `table_events`) and the dnd5e / pf2e actor data pass scripted end-to-end
+> tests against a fake module, and Magi Server plays whole sessions through the
+> sidecar that way, but **they have not yet been tested in a real Foundry
+> world.** Treat this as a prototype.
 
 ## How it works
 
@@ -89,7 +87,9 @@ reads for D&D 5E, its first system.
 | `post_as_actor` | **Director.** Post an in-character message as an actor. The GM confirms first. |
 | `roll_for_actor` | **Director.** Roll a dice formula for an actor and post it. The GM confirms first. |
 | `get_spotlight` | **Director.** Messages and rolls per player character over recent chat, least-served first |
-| `director_status` | **Director.** Connection, game system, whether actions need the GM, and actions awaiting the GM |
+| `director_status` | **Director.** Connection, game system, whether actions need the GM, whether the Director may run the table, and actions awaiting the GM |
+| `table_apply` | **Director runs the table.** Apply ops in order: draw a scene's map and activate it, place / move / remove tokens, mark one defeated, set HP, draw an attack line, narrate or whisper, make Foundry users for the people seated |
+| `table_events` | **Director runs the table.** Tokens people dragged and what they wrote in chat, since a sequence number |
 
 ### The GM confirmation flow
 
@@ -118,6 +118,51 @@ content there before it is sent here at all (see the
 Setting `DIRECTOR_AUTONOMOUS=true` skips the Foundry dialog; leave it off
 unless the GM has chosen to let the Director act on its own.
 
+### When the Director runs the table
+
+Magi Server can also run a whole table on Foundry: its built-in grid is the
+rules, and Foundry is the map people see and play on (Magi Server's
+`director/foundry.py`, `magi director foundry`). For that the GM turns on
+**Configure Settings → Magi Bridge → Director runs the table**, and the module
+then applies `tableCommand` ops (`src/video/foundry-module/scripts/magi-table.mjs`)
+without a dialog per step, because a map that waits for a click on every
+footstep is unplayable:
+
+- a Foundry scene per Director scene (`padding: 0`, 100 px squares, floor
+  colour, features as locked drawings), activated; a scene is cleared of what
+  an earlier run left when it is drawn again;
+- one world actor per character, foe or bystander (folder "Magi Director",
+  owned by the Foundry users who play it), with a linked token; foes are
+  hostile, bystanders neutral; HP is set where the system keeps it
+  (`system.attributes.hp`), and a downed one gets the defeated status;
+- attack lines as drawings, narration and real whispers in chat, and users
+  for the people the Director seats (players, or an assistant GM).
+
+Everything it makes is tagged `flags.magi-bridge.key` so it can be found
+again. People's token drags (`updateToken` by another user) and chat lines
+come back as `tableEvent` messages, buffered by the sidecar for `table_events`.
+Speaking or rolling as an existing actor still goes through the GM dialog.
+
+The **Bridge user** setting names the one user whose browser connects to the
+sidecar. Set it (the headless GM does) when an assistant GM also plays, so
+their browser does not take over the single connection.
+
+### A server nobody sits at: the headless GM
+
+Foundry modules run only in a browser, so a Foundry server without a GM at a
+keyboard needs one. `scripts/headless-gm.mjs` is that browser: a headless
+Chromium (Playwright) that accepts the license agreement if asked, logs in to
+setup with the admin key, launches the world, joins as the GM, enables this
+module, points it at the sidecar, makes itself the bridge user, and with
+`DIRECTOR_RUNS_TABLE=true` turns on "Director runs the table". It then
+watches the page and starts over if Foundry restarts.
+
+The `Dockerfile` builds one image for both the sidecar (`node dist/index.js`,
+the default) and the headless GM (`node scripts/headless-gm.mjs`). Magi
+Server's `deploy/foundry/` runs them with Foundry itself (the official
+licensed release, via the `felddy/foundryvtt` image and your foundryvtt.com
+account) on its dev server.
+
 ## How it talks to Magi Server
 
 Magi Server is the research platform; its `director/` package is the AI
@@ -136,11 +181,13 @@ this sidecar's tools:
 and reads the table through the resources plus `get_spotlight` and
 `director_status`.
 
-**Known gap:** the Magi Server side of this link, an adapter that connects to
-`/mcp` and calls these tools once `ActionGate` has approved an action, is not
-written yet. Today the sidecar can be driven by any MCP client (the
-`scripts/director-test.ts` script is one), and Magi Server plays without
-Foundry through its theatre-of-the-mind and built-in VTT tables.
+Magi Server's `director/foundry.py` is an MCP client of `/mcp` for running a
+table (`table_apply`, `table_events`, `director_status`).
+
+**Known gap:** the suggest-mode actions above (an adapter that calls
+`post_as_actor` and friends once `ActionGate` has approved an action) are not
+wired yet. Any MCP client can drive the sidecar (`scripts/director-test.ts`
+is one).
 
 See Magi Server's [README](https://github.com/Magi-AGI/magi-server#readme) and
 [docs/DIRECTOR.md](https://github.com/Magi-AGI/magi-server/blob/main/docs/DIRECTOR.md)
@@ -203,6 +250,7 @@ With the sidecar running (same `.env`):
 ```bash
 npm run test:integration   # state flow end to end against a fake module
 npm run test:director      # Director tools, including GM approve and decline
+npm run test:table         # Director runs the table: ops, the GM's setting, events
 ```
 
 Both use a fake module in place of Foundry. The next step is a session in a

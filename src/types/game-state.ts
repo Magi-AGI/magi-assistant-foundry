@@ -32,4 +32,6 @@ export interface GameState {
   combat: FoundryCombat | null;
   chatHistory: ChatMessageRecord[];
   connectedAt: string | null;
+  /** The GM let the Director run the table (scenes, tokens, narration). */
+  tableControl: boolean;
 }

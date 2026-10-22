@@ -12,12 +12,15 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { GameStateStore } from '../foundry/game-state-store.js';
 import type { FoundryWsServer } from '../foundry/ws-server.js';
 import type { ActionResults } from '../foundry/action-results.js';
+import type { TableEvents } from '../foundry/table-events.js';
 import { computeSpotlight } from '../foundry/spotlight.js';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
 
 /** The GM may take a while to read and decide. */
 const DIRECTOR_ACTION_TIMEOUT_MS = 120_000;
+/** Table ops need no GM decision, only Foundry's own round trips. */
+const TABLE_COMMAND_TIMEOUT_MS = 30_000;
 
 /** Dice formulas only: numbers, dice, keep/drop, arithmetic, and @-references. */
 const FORMULA = /^[0-9dDkKhHlLfF+\-*/() @._a-zA-Z]{1,80}$/;
@@ -31,6 +34,7 @@ export function registerDirectorTools(
   store: GameStateStore,
   wsServer: FoundryWsServer,
   results: ActionResults,
+  tableEvents?: TableEvents,
 ): void {
   async function act(kind: 'postAsActor' | 'rollForActor', fields: Record<string, string | undefined>): Promise<ToolResult> {
     if (!wsServer.isConnected()) return text('Error: Foundry module not connected', true);
@@ -90,8 +94,62 @@ export function registerDirectorTools(
       moduleConnected: wsServer.isConnected(),
       gameSystem: store.getState().gameSystem,
       requiresGmConfirmation: !getConfig().directorAutonomous,
+      tableControl: store.getState().tableControl,
       actionsAwaitingGm: results.pending,
       playerCharacters: store.getActors().filter((a) => a.playerOwned ?? a.type === 'character').map((a) => ({ id: a.id, name: a.name })),
     }, null, 2)),
+  );
+
+  // -- The Director runs the table: scenes, tokens, narration ----------------
+
+  const cell = z.tuple([z.number().int().min(0).max(500), z.number().int().min(0).max(500)]);
+  const key = z.string().min(1).max(120);
+  const colour = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+  const name = z.string().min(1).max(120);
+  const op = z.discriminatedUnion('op', [
+    z.object({ op: z.literal('scene'), key, name, cols: z.number().int().min(1).max(200),
+      rows: z.number().int().min(1).max(200), background: colour,
+      features: z.array(z.object({ cell, w: z.number().int().min(1).optional(), h: z.number().int().min(1).optional(),
+        colour, label: z.string().max(80), blocks: z.boolean() })).max(5000) }),
+    z.object({ op: z.literal('token'), key, name, cell, colour, kind: z.enum(['pc', 'foe', 'npc']),
+      owners: z.array(name).max(20), hp: z.tuple([z.number().int(), z.number().int()]).optional() }),
+    z.object({ op: z.literal('move'), key, cell }),
+    z.object({ op: z.literal('remove'), keys: z.array(key).max(500) }),
+    z.object({ op: z.literal('defeated'), key, value: z.boolean() }),
+    z.object({ op: z.literal('hp'), key, value: z.number().int(), max: z.number().int() }),
+    z.object({ op: z.literal('line'), key, from: cell, to: cell, colour }),
+    z.object({ op: z.literal('chat'), speaker: name, text: z.string().min(1).max(4000),
+      whisperTo: z.array(name).max(20).optional() }),
+    z.object({ op: z.literal('users'), users: z.array(z.object({ name, password: z.string().max(200),
+      role: z.enum(['player', 'assistant']) })).max(20) }),
+  ]);
+
+  server.tool(
+    'table_apply',
+    'Run the table: apply ops in order (draw a scene\'s map and activate it, place, move or remove tokens, mark one defeated, set HP, draw an attack line, post narration or a whisper, make Foundry users for the people seated). Works only when the GM has turned on the Magi Bridge setting "Director runs the table". Cells are [column, row] on the Director\'s grid.',
+    { ops: z.array(op).min(1).max(200).describe('Table ops, applied in order') },
+    async ({ ops }) => {
+      if (!wsServer.isConnected()) return text('Error: Foundry module not connected', true);
+      const { correlationId, promise } = results.await(TABLE_COMMAND_TIMEOUT_MS);
+      if (!wsServer.send({ type: 'tableCommand', correlationId, ops } as never)) {
+        return text('Error: failed to send to the Foundry module', true);
+      }
+      try {
+        const result = await promise;
+        return text(JSON.stringify({ ok: result.ok, detail: result.detail, data: result.data ?? null }), !result.ok);
+      } catch (err) {
+        return text(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
+      }
+    },
+  );
+
+  server.tool(
+    'table_events',
+    'What people did at the Director\'s table since `after`: tokens they dragged (with the square it landed on) and what they wrote in chat. Returns {events, last}; pass `last` back as `after` next time.',
+    {
+      after: z.number().int().min(0).optional().default(0).describe('The last sequence number already read'),
+      limit: z.number().int().min(1).max(500).optional().default(100),
+    },
+    async ({ after, limit }) => text(JSON.stringify(tableEvents ? tableEvents.since(after, limit) : { events: [], last: 0 })),
   );
 }

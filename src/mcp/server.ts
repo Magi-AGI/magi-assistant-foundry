@@ -20,6 +20,7 @@ import { registerResources } from './resources.js';
 import { registerTools } from './tools.js';
 import { registerDirectorTools } from './director-tools.js';
 import type { ActionResults } from '../foundry/action-results.js';
+import type { TableEvents } from '../foundry/table-events.js';
 import type { GameStateStore } from '../foundry/game-state-store.js';
 import type { FoundryWsServer } from '../foundry/ws-server.js';
 import type { RecordingStateStore } from '../foundry/recording-state.js';
@@ -80,7 +81,7 @@ function checkSocketAlive(socketPath: string): Promise<boolean> {
   });
 }
 
-export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsServer, videoCapture?: VideoCaptureCoordinator, recordingState?: RecordingStateStore, actionResults?: ActionResults): Promise<void> {
+export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsServer, videoCapture?: VideoCaptureCoordinator, recordingState?: RecordingStateStore, actionResults?: ActionResults, tableEvents?: TableEvents): Promise<void> {
   const config = getConfig();
   if (!config.mcpAuthToken) {
     logger.info('MCP server: disabled (no MCP_AUTH_TOKEN set)');
@@ -106,7 +107,7 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
     );
     registerResources(instance, store, videoCapture);
     registerTools(instance, store, wsServer, recordingState);
-    if (actionResults) registerDirectorTools(instance, store, wsServer, actionResults);
+    if (actionResults) registerDirectorTools(instance, store, wsServer, actionResults, tableEvents);
     return instance;
   }
 

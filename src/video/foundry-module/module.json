@@ -2,7 +2,7 @@
   "id": "magi-bridge",
   "title": "Magi Bridge",
   "description": "Bridges Foundry VTT game state to the Magi sidecar via WebSocket. Captures actors, chat, combat, scenes, and optionally video for AI GM training data.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "compatibility": {
     "minimum": "13",
     "verified": "13.351"

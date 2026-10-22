@@ -12,12 +12,17 @@
  * otherwise delay small game-state events at the TCP layer.
  */
 
+import { MagiTable } from './magi-table.mjs';
+
 const MODULE_ID = 'magi-bridge';
 const LOG_PREFIX = 'Magi Bridge |';
 
 class MagiBridge {
   /** @type {WebSocket|null} Game state WebSocket */
   ws = null;
+
+  /** The table the AI Director runs, when the GM allows it. */
+  table = new MagiTable((msg) => this._send(msg));
 
   /** @type {WebSocket|null} Video WebSocket (separate connection) */
   videoWs = null;
@@ -102,6 +107,27 @@ class MagiBridge {
       default: 'ws://127.0.0.1:3301',
     });
 
+    game.settings.register(MODULE_ID, 'directorRunsTable', {
+      name: game.i18n.localize('MAGI_BRIDGE.Settings.DirectorRunsTable.Name'),
+      hint: game.i18n.localize('MAGI_BRIDGE.Settings.DirectorRunsTable.Hint'),
+      scope: 'world',
+      config: true,
+      restricted: true,
+      type: Boolean,
+      default: false,
+      onChange: () => this._sendGameReady(),
+    });
+
+    game.settings.register(MODULE_ID, 'bridgeUser', {
+      name: game.i18n.localize('MAGI_BRIDGE.Settings.BridgeUser.Name'),
+      hint: game.i18n.localize('MAGI_BRIDGE.Settings.BridgeUser.Hint'),
+      scope: 'world',
+      config: true,
+      restricted: true,
+      type: String,
+      default: '',
+    });
+
     game.settings.register(MODULE_ID, 'enableDiagnostics', {
       name: game.i18n.localize('MAGI_BRIDGE.Settings.EnableDiagnostics.Name'),
       hint: game.i18n.localize('MAGI_BRIDGE.Settings.EnableDiagnostics.Hint'),
@@ -118,10 +144,16 @@ class MagiBridge {
       console.log(`${LOG_PREFIX} Not GM — module inactive`);
       return;
     }
+    const bridgeUser = game.settings.get(MODULE_ID, 'bridgeUser');
+    if (bridgeUser && bridgeUser !== game.user.name) {
+      console.log(`${LOG_PREFIX} ${bridgeUser} runs the bridge, not ${game.user.name} — module inactive`);
+      return;
+    }
 
     console.log(`${LOG_PREFIX} GM detected — connecting to sidecar`);
     this._connect();
     this._registerHooks();
+    this.table.registerHooks();
 
     if (game.settings.get(MODULE_ID, 'enableDiagnostics')) {
       console.log(`${LOG_PREFIX} diagnostics enabled — emitting probe every 30s`);
@@ -350,6 +382,9 @@ class MagiBridge {
       case 'rollForActor':
         this._handleDirectorAction(msg);
         break;
+      case 'tableCommand':
+        this._handleTableCommand(msg);
+        break;
       default:
         console.warn(`${LOG_PREFIX} Unknown sidecar message:`, msg.type);
     }
@@ -433,6 +468,21 @@ class MagiBridge {
     }
   }
 
+  /** The Director runs the table: only with the GM's standing permission, and one op at a time, in order. */
+  async _handleTableCommand(msg) {
+    const reply = (ok, detail, data) => this._send({ type: 'actionResult', correlationId: msg.correlationId, ok, detail, data });
+    if (!game.user.isGM) return reply(false, 'error: the connected client is not the GM');
+    if (!game.settings.get(MODULE_ID, 'directorRunsTable')) return reply(false, 'table-control-off');
+    this._tableQueue = (this._tableQueue ?? Promise.resolve()).then(async () => {
+      try {
+        reply(true, 'applied', await this.table.apply(msg.ops));
+      } catch (err) {
+        console.error(`${LOG_PREFIX} table command failed:`, err);
+        reply(false, `error: ${err?.message ?? err}`);
+      }
+    });
+  }
+
   async _confirm(title, content) {
     const DialogV2 = foundry.applications?.api?.DialogV2;
     if (DialogV2?.confirm) {
@@ -483,6 +533,7 @@ class MagiBridge {
       scene,
       combat,
       chatHistory,
+      tableControl: !!game.settings.get(MODULE_ID, 'directorRunsTable'),
     });
   }
 
@@ -891,6 +942,7 @@ Hooks.once('init', () => {
   const mod = game.modules.get(MODULE_ID);
   if (mod) {
     mod.api = {
+      table: bridge.table,
       startRecording: () => bridge.startRecording(),
       stopRecording: () => bridge.stopRecording(),
       toggleRecording: () => bridge.toggleRecording(),

@@ -15,6 +15,8 @@ export interface GameReadyMessage {
   scene: FoundryScene | null;
   combat: FoundryCombat | null;
   chatHistory: ChatMessageRecord[];
+  /** Whether the GM has let the Director run this table (the "Director runs the table" setting). */
+  tableControl?: boolean;
 }
 
 export interface ChatMessageMessage {
@@ -67,8 +69,20 @@ export interface ActionResultMessage {
   type: 'actionResult';
   correlationId: string;
   ok: boolean;
-  /** 'posted', 'rolled', 'declined-by-gm', 'no-actor', 'error: …' */
+  /** 'posted', 'rolled', 'declined-by-gm', 'no-actor', 'table-control-off', 'error: …' */
   detail: string;
+  /** Structured results, e.g. what a tableCommand created. */
+  data?: unknown;
+}
+
+/** Something a person did at the table in Foundry, for the Director to act on. */
+export type TableEvent =
+  | { kind: 'tokenMoved'; key: string; name: string; cell: [number, number]; user: string }
+  | { kind: 'chat'; user: string; text: string };
+
+export interface TableEventMessage {
+  type: 'tableEvent';
+  event: TableEvent;
 }
 
 export type ModuleMessage =
@@ -81,7 +95,8 @@ export type ModuleMessage =
   | VideoChunkMessage
   | PongMessage
   | RecordingStatusMessage
-  | ActionResultMessage;
+  | ActionResultMessage
+  | TableEventMessage;
 
 // --- Messages from Sidecar → Foundry module ---
 
@@ -129,10 +144,43 @@ export interface RollForActorMessage {
   requireConfirm: boolean;
 }
 
+/** A square on the Director's grid: [column, row]. */
+export type Cell = [number, number];
+
+/**
+ * One change to the table the Director runs: the scene and its map, tokens,
+ * chat, and the Foundry users who play. Everything is keyed by the Director's
+ * own names, stored on the documents as `flags.magi-bridge.key`.
+ */
+export type TableOp =
+  | { op: 'scene'; key: string; name: string; cols: number; rows: number; background: string;
+      features: { cell: Cell; w?: number; h?: number; colour: string; label: string; blocks: boolean }[] }
+  | { op: 'token'; key: string; name: string; cell: Cell; colour: string; kind: 'pc' | 'foe' | 'npc';
+      owners: string[]; hp?: [number, number] }
+  | { op: 'move'; key: string; cell: Cell }
+  | { op: 'remove'; keys: string[] }
+  | { op: 'defeated'; key: string; value: boolean }
+  | { op: 'hp'; key: string; value: number; max: number }
+  | { op: 'line'; key: string; from: Cell; to: Cell; colour: string }
+  | { op: 'chat'; speaker: string; text: string; whisperTo?: string[] }
+  | { op: 'users'; users: { name: string; password: string; role: 'player' | 'assistant' }[] };
+
+/**
+ * AI Director: apply table ops in order. Only honoured when the GM has turned
+ * on the module's "Director runs the table" setting; there is no per-op
+ * confirmation, because a map that waits for a click on every step is unplayable.
+ */
+export interface TableCommandMessage {
+  type: 'tableCommand';
+  correlationId: string;
+  ops: TableOp[];
+}
+
 export type SidecarMessage =
   | WhisperMessage
   | PostAsActorMessage
   | RollForActorMessage
+  | TableCommandMessage
   | QueryStateMessage
   | PingMessage
   | RecordingControlMessage;

@@ -30,6 +30,7 @@ export class GameStateStore extends EventEmitter<GameStateStoreEvents> {
     combat: null,
     chatHistory: [],
     connectedAt: null,
+    tableControl: false,
   };
 
   // Debounce: coalesce rapid state changes (e.g., token drags) into one notification
@@ -44,6 +45,7 @@ export class GameStateStore extends EventEmitter<GameStateStoreEvents> {
     scene: FoundryScene | null;
     combat: FoundryCombat | null;
     chatHistory: ChatMessageRecord[];
+    tableControl?: boolean;
   }): void {
     // Detect world change: if the Foundry server was rebooted with a different world,
     // clear all state to prevent cross-campaign data leaks.
@@ -55,6 +57,7 @@ export class GameStateStore extends EventEmitter<GameStateStoreEvents> {
 
     this.state.worldId = incomingWorldId;
     this.state.gameSystem = payload.gameSystem ?? null;
+    this.state.tableControl = payload.tableControl ?? false;
     this.state.actors = new Map(Object.entries(payload.actors));
     this.state.scene = payload.scene;
     this.state.combat = payload.combat;
