@@ -26,7 +26,6 @@ import type { FoundryWsServer } from '../foundry/ws-server.js';
 import type { RecordingStateStore } from '../foundry/recording-state.js';
 import type { VideoCaptureCoordinator } from '../video/capture.js';
 
-const MCP_HOST = '127.0.0.1';
 const MCP_PATH = '/mcp';
 
 let httpServer: http.Server | null = null;
@@ -211,8 +210,9 @@ export async function startMcpServer(store: GameStateStore, wsServer: FoundryWsS
       logger.info(`MCP server listening on UDS ${socketPath} (mode 0600), path ${MCP_PATH}`);
     });
   } else {
-    httpServer.listen(mcpPort, MCP_HOST, () => {
-      logger.info(`MCP server listening on ${MCP_HOST}:${mcpPort}${MCP_PATH}`);
+    const host = getConfig().bindHost;
+    httpServer.listen(mcpPort, host, () => {
+      logger.info(`MCP server listening on ${host}:${mcpPort}${MCP_PATH}`);
     });
   }
 

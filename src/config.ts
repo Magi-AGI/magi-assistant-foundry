@@ -19,6 +19,12 @@ export interface FoundryConfig {
    * Off by default; the GM confirms every action in Foundry (suggest mode).
    */
   directorAutonomous: boolean;
+  /**
+   * Address the WebSocket and MCP servers listen on. Loopback by default; a
+   * container on a bridge network (Docker Desktop without host networking)
+   * sets 0.0.0.0 and publishes the ports on the host's loopback only.
+   */
+  bindHost: string;
 }
 
 let _config: FoundryConfig | null = null;
@@ -45,7 +51,13 @@ export function getConfig(): FoundryConfig {
     videoDir: process.env.VIDEO_DIR ?? './data/video',
     foundryDataDir: process.env.FOUNDRY_DATA_DIR ?? '',
     directorAutonomous: process.env.DIRECTOR_AUTONOMOUS === 'true',
+    bindHost: process.env.BIND_HOST || '127.0.0.1',
   };
+
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(_config.bindHost);
+  if (!loopback && (!wsToken || !mcpAuthToken)) {
+    throw new Error(`BIND_HOST=${_config.bindHost} needs WS_AUTH_TOKEN and MCP_AUTH_TOKEN set`);
+  }
 
   return _config;
 }

@@ -28,7 +28,7 @@ export class FoundryWsServer extends EventEmitter<WsServerEvents> {
     const expectedToken = config.wsToken;
 
     this.wss = new WebSocketServer({
-      host: '127.0.0.1',
+      host: config.bindHost,
       port,
       verifyClient: (info: { req: IncomingMessage }, cb: (result: boolean, code?: number, name?: string) => void) => {
         if (!expectedToken) {
@@ -88,7 +88,7 @@ export class FoundryWsServer extends EventEmitter<WsServerEvents> {
     });
 
     this.wss.on('listening', () => {
-      logger.info(`WebSocket server listening on 127.0.0.1:${port}`);
+      logger.info(`WebSocket server listening on ${config.bindHost}:${port}`);
     });
 
     // Ping/pong heartbeat (15s interval, 10s timeout)

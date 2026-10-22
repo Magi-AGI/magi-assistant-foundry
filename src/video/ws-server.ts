@@ -29,7 +29,7 @@ export class VideoWsServer extends EventEmitter<VideoWsServerEvents> {
     const expectedToken = config.wsToken;
 
     this.wss = new WebSocketServer({
-      host: '127.0.0.1',
+      host: config.bindHost,
       port,
       verifyClient: (info: { req: IncomingMessage }, cb: (result: boolean, code?: number, name?: string) => void) => {
         if (!expectedToken) {
@@ -94,7 +94,7 @@ export class VideoWsServer extends EventEmitter<VideoWsServerEvents> {
     });
 
     this.wss.on('listening', () => {
-      logger.info(`Video WS server listening on 127.0.0.1:${port}`);
+      logger.info(`Video WS server listening on ${config.bindHost}:${port}`);
     });
 
     // Ping/pong heartbeat (30s interval — less aggressive than game-state
