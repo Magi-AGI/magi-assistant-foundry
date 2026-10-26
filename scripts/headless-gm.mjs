@@ -139,6 +139,13 @@ async function configure(page) {
     await set('sidecarUrl', want.url);
     await set('sidecarToken', want.token);
     await set('bridgeUser', game.user.name);
+    // Nobody looks at this browser's canvas, and drawing it in software keeps
+    // two cores busy and makes every table op take seconds. Documents (scenes,
+    // tokens, drawings) don't need it.
+    if (game.settings.settings.has('core.noCanvas') && game.settings.get('core', 'noCanvas') !== true) {
+      await game.settings.set('core', 'noCanvas', true);
+      changes.push('noCanvas');
+    }
     if (want.runsTable) await set('directorRunsTable', true);
     // The module connects at ready, with the settings it had then.
     return changes.filter((k) => k !== 'directorRunsTable').length ? `set ${changes.join(', ')}` : '';
