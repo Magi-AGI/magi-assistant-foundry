@@ -20,7 +20,10 @@ import { logger } from '../logger.js';
 /** The GM may take a while to read and decide. */
 const DIRECTOR_ACTION_TIMEOUT_MS = 120_000;
 /** Table ops need no GM decision, only Foundry's own round trips. */
+/** A table op takes a GM browser a second or more (a token makes an actor too), so allow for the batch. */
 const TABLE_COMMAND_TIMEOUT_MS = 30_000;
+const TABLE_OP_TIMEOUT_MS = 5_000;
+const TABLE_COMMAND_MAX_TIMEOUT_MS = 300_000;
 
 /** Dice formulas only: numbers, dice, keep/drop, arithmetic, and @-references. */
 const FORMULA = /^[0-9dDkKhHlLfF+\-*/() @._a-zA-Z]{1,80}$/;
@@ -130,7 +133,8 @@ export function registerDirectorTools(
     { ops: z.array(op).min(1).max(200).describe('Table ops, applied in order') },
     async ({ ops }) => {
       if (!wsServer.isConnected()) return text('Error: Foundry module not connected', true);
-      const { correlationId, promise } = results.await(TABLE_COMMAND_TIMEOUT_MS);
+      const timeout = Math.min(TABLE_COMMAND_TIMEOUT_MS + ops.length * TABLE_OP_TIMEOUT_MS, TABLE_COMMAND_MAX_TIMEOUT_MS);
+      const { correlationId, promise } = results.await(timeout);
       if (!wsServer.send({ type: 'tableCommand', correlationId, ops } as never)) {
         return text('Error: failed to send to the Foundry module', true);
       }

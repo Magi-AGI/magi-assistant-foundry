@@ -22,7 +22,9 @@
  *   FOUNDRY_ADMIN_KEY      Foundry's admin password, for /auth and /setup
  *   FOUNDRY_LICENSE_KEY    only used if Foundry asks for a key
  *   FOUNDRY_GM_USER        GM user to join as (default Gamemaster)
- *   FOUNDRY_GM_PASSWORD    its password (default empty)
+ *   FOUNDRY_GM_PASSWORD    its password. Foundry makes the Gamemaster user with none, so when
+ *                          this is set the GM gives it this one (a public Foundry otherwise
+ *                          lets anyone join as Gamemaster)
  *   SIDECAR_WS_URL         ws://127.0.0.1:3300
  *   WS_AUTH_TOKEN          the sidecar's module token
  *   DIRECTOR_RUNS_TABLE    true to turn on "Director runs the table"
@@ -50,7 +52,13 @@ async function shot(page, name) {
   } catch { /* best effort */ }
 }
 
-async function firstVisible(page, selectors) {
+/**
+ * The first of `selectors` that is visible. Foundry v13 renders its license,
+ * auth and join forms in the browser after the page loads, so wait (up to
+ * `timeout` ms) for one of them before looking.
+ */
+async function firstVisible(page, selectors, timeout = 20_000) {
+  await page.locator(selectors.join(', ')).first().waitFor({ state: 'visible', timeout }).catch(() => {});
   for (const s of selectors) {
     const el = page.locator(s).first();
     if (await el.count() && await el.isVisible().catch(() => false)) return el;
@@ -108,10 +116,22 @@ async function join(page) {
     throw new Error(`no user ${GM_USER} on the join page (have: ${users.map((u) => u.trim()).filter(Boolean).join(', ')})`);
   }
   log(`joining as ${GM_USER}`);
-  await select.selectOption({ label: GM_USER });
-  await page.locator('input[name="password"]').fill(env('FOUNDRY_GM_PASSWORD'));
-  await page.locator('button[name="join"]').click();
-  await page.waitForURL(/\/game/, { timeout: 60_000 });
+  // With FOUNDRY_GM_PASSWORD set, the first start finds the Gamemaster still
+  // without a password (Foundry makes it with none): try that before giving up.
+  const passwords = [...new Set([env('FOUNDRY_GM_PASSWORD'), ''])];
+  for (const [i, password] of passwords.entries()) {
+    await select.selectOption({ label: GM_USER });
+    await page.locator('input[name="password"]').fill(password);
+    await page.locator('button[name="join"]').click();
+    const last = i === passwords.length - 1;
+    try {
+      await page.waitForURL(/\/game/, { timeout: last ? 60_000 : 15_000 });
+      if (!password && env('FOUNDRY_GM_PASSWORD')) log('joined with no password; setting FOUNDRY_GM_PASSWORD');
+      return;
+    } catch (err) {
+      if (last) throw err;
+    }
+  }
 }
 
 /** Enable Magi Bridge and point it at the sidecar. True if Foundry must reload to pick it up. */
@@ -133,6 +153,17 @@ async function configure(page) {
     await set('sidecarUrl', want.url);
     await set('sidecarToken', want.token);
     await set('bridgeUser', game.user.name);
+    // Nobody looks at this browser's canvas, and drawing it in software at full
+    // rate keeps the CPU busy and makes every table op take seconds. Throttle it
+    // rather than turn it off: with core.noCanvas, Foundry 13 throws on every
+    // placeable deletion (CanvasDocument#_onDelete reads layer.clipboard).
+    const cheap = { performanceMode: CONST.CANVAS_PERFORMANCE_MODES?.LOW ?? 0, maxFPS: 10 };
+    for (const [key, value] of Object.entries(cheap)) {
+      if (game.settings.settings.has(`core.${key}`) && game.settings.get('core', key) !== value) {
+        await game.settings.set('core', key, value);
+        changes.push(key);
+      }
+    }
     if (want.runsTable) await set('directorRunsTable', true);
     // The module connects at ready, with the settings it had then.
     return changes.filter((k) => k !== 'directorRunsTable').length ? `set ${changes.join(', ')}` : '';
@@ -149,6 +180,12 @@ async function inGame(page) {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.game?.ready, null, { timeout: 180_000 });
   }
+  const secured = await page.evaluate(async (password) => {
+    if (!password) return false;
+    await game.user.update({ password });  // the same value on every start: a no-op after the first
+    return true;
+  }, env('FOUNDRY_GM_PASSWORD'));
+  if (!secured) log('FOUNDRY_GM_PASSWORD is not set: the Gamemaster user keeps whatever password it has');
   const status = await page.evaluate(() => ({
     world: game.world.id, system: game.system.id, version: game.version, user: game.user.name,
     module: !!game.modules.get('magi-bridge')?.active,
