@@ -50,7 +50,13 @@ async function shot(page, name) {
   } catch { /* best effort */ }
 }
 
-async function firstVisible(page, selectors) {
+/**
+ * The first of `selectors` that is visible. Foundry v13 renders its license,
+ * auth and join forms in the browser after the page loads, so wait (up to
+ * `timeout` ms) for one of them before looking.
+ */
+async function firstVisible(page, selectors, timeout = 20_000) {
+  await page.locator(selectors.join(', ')).first().waitFor({ state: 'visible', timeout }).catch(() => {});
   for (const s of selectors) {
     const el = page.locator(s).first();
     if (await el.count() && await el.isVisible().catch(() => false)) return el;
