@@ -139,12 +139,16 @@ async function configure(page) {
     await set('sidecarUrl', want.url);
     await set('sidecarToken', want.token);
     await set('bridgeUser', game.user.name);
-    // Nobody looks at this browser's canvas, and drawing it in software keeps
-    // two cores busy and makes every table op take seconds. Documents (scenes,
-    // tokens, drawings) don't need it.
-    if (game.settings.settings.has('core.noCanvas') && game.settings.get('core', 'noCanvas') !== true) {
-      await game.settings.set('core', 'noCanvas', true);
-      changes.push('noCanvas');
+    // Nobody looks at this browser's canvas, and drawing it in software at full
+    // rate keeps the CPU busy and makes every table op take seconds. Throttle it
+    // rather than turn it off: with core.noCanvas, Foundry 13 throws on every
+    // placeable deletion (CanvasDocument#_onDelete reads layer.clipboard).
+    const cheap = { performanceMode: CONST.CANVAS_PERFORMANCE_MODES?.LOW ?? 0, maxFPS: 10 };
+    for (const [key, value] of Object.entries(cheap)) {
+      if (game.settings.settings.has(`core.${key}`) && game.settings.get('core', key) !== value) {
+        await game.settings.set('core', key, value);
+        changes.push(key);
+      }
     }
     if (want.runsTable) await set('directorRunsTable', true);
     // The module connects at ready, with the settings it had then.
