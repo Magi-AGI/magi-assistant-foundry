@@ -116,10 +116,22 @@ async function join(page) {
     throw new Error(`no user ${GM_USER} on the join page (have: ${users.map((u) => u.trim()).filter(Boolean).join(', ')})`);
   }
   log(`joining as ${GM_USER}`);
-  await select.selectOption({ label: GM_USER });
-  await page.locator('input[name="password"]').fill(env('FOUNDRY_GM_PASSWORD'));
-  await page.locator('button[name="join"]').click();
-  await page.waitForURL(/\/game/, { timeout: 60_000 });
+  // With FOUNDRY_GM_PASSWORD set, the first start finds the Gamemaster still
+  // without a password (Foundry makes it with none): try that before giving up.
+  const passwords = [...new Set([env('FOUNDRY_GM_PASSWORD'), ''])];
+  for (const [i, password] of passwords.entries()) {
+    await select.selectOption({ label: GM_USER });
+    await page.locator('input[name="password"]').fill(password);
+    await page.locator('button[name="join"]').click();
+    const last = i === passwords.length - 1;
+    try {
+      await page.waitForURL(/\/game/, { timeout: last ? 60_000 : 15_000 });
+      if (!password && env('FOUNDRY_GM_PASSWORD')) log('joined with no password; setting FOUNDRY_GM_PASSWORD');
+      return;
+    } catch (err) {
+      if (last) throw err;
+    }
+  }
 }
 
 /** Enable Magi Bridge and point it at the sidecar. True if Foundry must reload to pick it up. */
