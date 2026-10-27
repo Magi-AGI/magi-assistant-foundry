@@ -163,7 +163,8 @@ export type TableOp =
   | { op: 'hp'; key: string; value: number; max: number }
   | { op: 'line'; key: string; from: Cell; to: Cell; colour: string }
   | { op: 'chat'; speaker: string; text: string; whisperTo?: string[] }
-  | { op: 'users'; users: { name: string; password: string; role: 'player' | 'assistant' }[] };
+  | { op: 'users'; users: { name: string; password: string; role: 'player' | 'assistant' }[] }
+  | { op: 'userIds'; names: string[] };
 
 /**
  * AI Director: apply table ops in order. Only honoured when the GM has turned

@@ -248,6 +248,11 @@ export class MagiTable {
     return out;
   }
 
+  /** The Foundry ids of these users (null for a name with no user), e.g. for signing someone in from outside. */
+  async _userIds(op) {
+    return Object.fromEntries(op.names.map((n) => [n, game.users.getName(n)?.id ?? null]));
+  }
+
   // ─── What people do at the table ────────────────────────
 
   registerHooks() {
