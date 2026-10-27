@@ -125,11 +125,12 @@ export function registerDirectorTools(
       whisperTo: z.array(name).max(20).optional() }),
     z.object({ op: z.literal('users'), users: z.array(z.object({ name, password: z.string().max(200),
       role: z.enum(['player', 'assistant']) })).max(20) }),
+    z.object({ op: z.literal('userIds'), names: z.array(name).min(1).max(20) }),
   ]);
 
   server.tool(
     'table_apply',
-    'Run the table: apply ops in order (draw a scene\'s map and activate it, place, move or remove tokens, mark one defeated, set HP, draw an attack line, post narration or a whisper, make Foundry users for the people seated). Works only when the GM has turned on the Magi Bridge setting "Director runs the table". Cells are [column, row] on the Director\'s grid.',
+    'Run the table: apply ops in order (draw a scene\'s map and activate it, place, move or remove tokens, mark one defeated, set HP, draw an attack line, post narration or a whisper, make Foundry users for the people seated, look up the ids of users). Works only when the GM has turned on the Magi Bridge setting "Director runs the table". Cells are [column, row] on the Director\'s grid.',
     { ops: z.array(op).min(1).max(200).describe('Table ops, applied in order') },
     async ({ ops }) => {
       if (!wsServer.isConnected()) return text('Error: Foundry module not connected', true);
