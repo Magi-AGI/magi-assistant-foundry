@@ -148,6 +148,22 @@ export interface RollForActorMessage {
 export type Cell = [number, number];
 
 /**
+ * A creature's statblock from the Director (magi-server director/srd5e.py `foundry_export`):
+ * HTML for any system, plus abilities, skills, traits and items the module writes onto a
+ * dnd5e actor. `lootable` makes a fallen creature's sheet viewable by everyone.
+ */
+export interface TableSheet {
+  name: string;
+  statblock: string;
+  hp: [number, number];
+  ac?: number | null;
+  conditions: string[];
+  lootable: boolean;
+  items: Record<string, unknown>[];
+  [field: string]: unknown;
+}
+
+/**
  * One change to the table the Director runs: the scene and its map, tokens,
  * chat, and the Foundry users who play. Everything is keyed by the Director's
  * own names, stored on the documents as `flags.magi-bridge.key`.
@@ -156,7 +172,8 @@ export type TableOp =
   | { op: 'scene'; key: string; name: string; cols: number; rows: number; background: string;
       features: { cell: Cell; w?: number; h?: number; colour: string; label: string; blocks: boolean }[] }
   | { op: 'token'; key: string; name: string; cell: Cell; colour: string; kind: 'pc' | 'foe' | 'npc';
-      owners: string[]; hp?: [number, number] }
+      owners: string[]; hp?: [number, number]; sheet?: TableSheet }
+  | { op: 'sheet'; key: string; sheet: TableSheet }
   | { op: 'move'; key: string; cell: Cell }
   | { op: 'remove'; keys: string[] }
   | { op: 'defeated'; key: string; value: boolean }

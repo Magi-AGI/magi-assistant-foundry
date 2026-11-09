@@ -23,7 +23,8 @@ function check(cond: unknown, label: string) {
 }
 
 /** The fake module's table: tokens by key, and the ops it was sent. */
-const board = { scene: '', tokens: new Map<string, [number, number]>(), chat: [] as string[] };
+const board = { scene: '', tokens: new Map<string, [number, number]>(), chat: [] as string[],
+  sheets: new Map<string, Record<string, unknown>>() };
 let tableControl = false;
 
 function ready(ws: WebSocket) {
@@ -44,7 +45,11 @@ async function main() {
     const data: Record<string, unknown> = {};
     for (const op of msg.ops) {
       if (op.op === 'scene') { board.scene = op.key; board.tokens.clear(); data[op.key] = 'scene-1'; }
-      if (op.op === 'token') { board.tokens.set(op.key, op.cell); data[op.key] = `token-${op.key}`; }
+      if (op.op === 'token') {
+        board.tokens.set(op.key, op.cell); data[op.key] = `token-${op.key}`;
+        if (op.sheet) board.sheets.set(op.key, op.sheet);
+      }
+      if (op.op === 'sheet') board.sheets.set(op.key, op.sheet);
       if (op.op === 'move') board.tokens.set(op.key, op.cell);
       if (op.op === 'remove') op.keys.forEach((k: string) => board.tokens.delete(k));
       if (op.op === 'chat') board.chat.push(`${op.speaker}: ${op.text}`);
@@ -86,6 +91,18 @@ async function main() {
   const result = JSON.parse(text(done));
   check(!done.isError && result.ok && result.data['Kestrel'] === 'token-Kestrel', 'ops applied in order, results returned');
   check(board.tokens.get('Goblin 1')?.[0] === 6 && board.chat.length === 1, 'the module saw the move and the narration');
+
+  const sheet = { name: 'Goblin 1', statblock: '<h2>Goblin 1</h2>', hp: [7, 7], ac: 15, conditions: [], lootable: false,
+    items: [{ name: 'Scimitar', type: 'weapon', quantity: 1, equipped: true }], abilities: { str: { value: 8, proficient: 0 } } };
+  const withSheet = await client.callTool({ name: 'table_apply', arguments: { ops: [
+    { op: 'token', key: 'Goblin 2', name: 'Goblin 2', cell: [9, 2], colour: '#b8352f', kind: 'foe', owners: [], sheet },
+    { op: 'sheet', key: 'Goblin 2', sheet: { ...sheet, hp: [0, 7], conditions: ['dead'], lootable: true } },
+  ] } });
+  check(!withSheet.isError, 'a statblock rides on a token, and a sheet op updates it (extra fields pass through)');
+  check(board.sheets.get('Goblin 2')?.lootable === true && (board.sheets.get('Goblin 2')?.abilities as any)?.str?.value === 8,
+    'the module got the whole sheet');
+  const noBlock = await client.callTool({ name: 'table_apply', arguments: { ops: [{ op: 'sheet', key: 'Goblin 2', sheet: { name: 'x' } }] } });
+  check(noBlock.isError, 'a sheet without its statblock is refused');
 
   const bad = await client.callTool({ name: 'table_apply', arguments: { ops: [{ op: 'move', key: 'Kestrel', cell: [-1, 2] }] } });
   check(bad.isError, 'a square off the grid is refused');
