@@ -25,6 +25,9 @@
  *   FOUNDRY_GM_PASSWORD    its password. Foundry makes the Gamemaster user with none, so when
  *                          this is set the GM gives it this one (a public Foundry otherwise
  *                          lets anyone join as Gamemaster)
+ *   FOUNDRY_OWNER_USER     a Gamemaster account for the server's owner (this GM holds the
+ *   FOUNDRY_OWNER_PASSWORD Gamemaster user, and Foundry allows one session per user); made
+ *                          if missing, its password kept to this one. Optional.
  *   SIDECAR_WS_URL         ws://127.0.0.1:3300
  *   WS_AUTH_TOKEN          the sidecar's module token
  *   DIRECTOR_RUNS_TABLE    true to turn on "Director runs the table"
@@ -186,6 +189,20 @@ async function inGame(page) {
     return true;
   }, env('FOUNDRY_GM_PASSWORD'));
   if (!secured) log('FOUNDRY_GM_PASSWORD is not set: the Gamemaster user keeps whatever password it has');
+  if (env('FOUNDRY_OWNER_USER') && env('FOUNDRY_OWNER_PASSWORD')) {
+    const owner = await page.evaluate(async ([name, password]) => {
+      const role = CONST.USER_ROLES.GAMEMASTER;
+      const user = game.users.getName(name);
+      if (!user) {
+        await User.create({ name, role, password });
+        return 'created';
+      }
+      // The same password on every start, so a changed secrets.env takes effect.
+      await user.update({ password, ...(user.role < role ? { role } : {}) });
+      return 'kept';
+    }, [env('FOUNDRY_OWNER_USER'), env('FOUNDRY_OWNER_PASSWORD')]);
+    log(`owner account ${env('FOUNDRY_OWNER_USER')}: ${owner}`);
+  }
   const status = await page.evaluate(() => ({
     world: game.world.id, system: game.system.id, version: game.version, user: game.user.name,
     module: !!game.modules.get('magi-bridge')?.active,
