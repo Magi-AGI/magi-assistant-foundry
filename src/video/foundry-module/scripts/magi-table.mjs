@@ -134,6 +134,7 @@ export class MagiTable {
   async _token(op) {
     const scene = this._requireScene();
     const actor = await this._actor(op);
+    if (op.sheet) await this._applySheet(actor, op.sheet);
     if (op.hp) await this._setHp(actor, op.hp[0], op.hp[1]);
     const disposition = { pc: CONST.TOKEN_DISPOSITIONS.FRIENDLY, npc: CONST.TOKEN_DISPOSITIONS.NEUTRAL,
       foe: CONST.TOKEN_DISPOSITIONS.HOSTILE }[op.kind];
@@ -197,6 +198,149 @@ export class MagiTable {
       await actor.update({ 'system.attributes.hp.value': value, 'system.attributes.hp.max': max });
     } catch (err) {
       console.warn(`${FLAG} | could not set HP for ${actor.name}:`, err);
+    }
+  }
+
+  /** A creature's statblock changed (gear taken or equipped, a spell slot spent, a condition). */
+  async _sheet(op) {
+    const actor = this._tokenDoc(op.key)?.actor ?? game.actors.find((a) => a.getFlag(FLAG, 'key') === op.key);
+    if (!actor) throw new Error(`no actor ${op.key}`);
+    await this._applySheet(actor, op.sheet);
+  }
+
+  /**
+   * The Director's statblock on an actor. In dnd5e: abilities, saves, skills, AC, speed, size,
+   * damage traits, coins, and items for its gear, features and spells (each flagged so the next
+   * update replaces them). In any system: the statblock as HTML in the biography and a flag. A
+   * fallen creature with something on it becomes viewable by everyone, so players can see the loot.
+   */
+  async _applySheet(actor, s) {
+    const dnd = game.system.id === 'dnd5e';
+    const has = (path) => foundry.utils.hasProperty(actor.system ?? {}, path);
+    const update = { [`flags.${FLAG}.statblock`]: s.statblock ?? '' };
+    if (has('details.biography.value')) update['system.details.biography.value'] = s.statblock ?? '';
+    if (dnd && s.abilities) {
+      for (const [k, a] of Object.entries(s.abilities)) {
+        update[`system.abilities.${k}.value`] = a.value;
+        update[`system.abilities.${k}.proficient`] = a.proficient;
+      }
+      for (const code of Object.keys(actor.system?.skills ?? {})) update[`system.skills.${code}.value`] = s.skills?.[code] ?? 0;
+      if (s.ac != null) {
+        update['system.attributes.ac.calc'] = 'flat';
+        update['system.attributes.ac.flat'] = s.ac;
+      }
+      if (s.speed) update['system.attributes.movement.walk'] = s.speed;
+      if (has('attributes.senses.ranges')) update['system.attributes.senses.ranges.darkvision'] = s.darkvision || null;
+      else if (has('attributes.senses')) update['system.attributes.senses.darkvision'] = s.darkvision || 0;
+      if (s.size) update['system.traits.size'] = s.size;
+      for (const t of ['dr', 'dv', 'di', 'ci']) if (has(`traits.${t}`)) update[`system.traits.${t}.value`] = s[t] ?? [];
+      if (has('traits.languages.custom')) update['system.traits.languages.custom'] = s.languages ?? '';
+      if (s.currency && has('currency')) update['system.currency'] = s.currency;
+      if (actor.type === 'npc') {
+        if (s.cr != null) update['system.details.cr'] = s.cr;
+        if (has('details.type.value')) update['system.details.type.value'] = s.type;
+      }
+      for (const [level, slots] of Object.entries(s.spellcasting?.slots ?? {})) {
+        if (!has(`spells.spell${level}`)) continue;
+        update[`system.spells.spell${level}.override`] = slots;
+        update[`system.spells.spell${level}.value`] = slots - (s.spellcasting.used?.[level] ?? 0);
+      }
+    }
+    try {
+      await actor.update(update);
+    } catch (err) {
+      console.warn(`${FLAG} | could not write the statblock for ${actor.name}; keeping the text only:`, err);
+      await actor.update({ [`flags.${FLAG}.statblock`]: s.statblock ?? '' }).catch(() => {});
+    }
+    if (dnd) await this._applyItems(actor, s);
+    await this._applyConditions(actor, s.conditions ?? []);
+    const looted = !!actor.getFlag(FLAG, 'lootable');
+    if (!!s.lootable !== looted) {
+      const level = s.lootable ? CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER : CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE;
+      await actor.update({ 'ownership.default': level, [`flags.${FLAG}.lootable`]: !!s.lootable });
+    }
+  }
+
+  /** Replace the items the Director made on this actor with the sheet's gear, features and spells. */
+  async _applyItems(actor, s) {
+    const old = actor.items.filter((i) => i.getFlag(FLAG, 'item')).map((i) => i.id);
+    if (old.length) await actor.deleteEmbeddedDocuments('Item', old);
+    const types = game.documentTypes?.Item ?? Object.keys(CONFIG.Item.dataModels ?? {});
+    const docs = (s.items ?? []).map((it) => this._itemData(it, types));
+    if (s.class && types.includes('class')) {
+      const hd = `d${s.class.hd}`;
+      docs.unshift({ name: s.class.name, type: 'class', flags: { [FLAG]: { item: true } },
+        system: { identifier: s.class.identifier, levels: s.class.levels, hd: { denomination: hd }, hitDice: hd } });
+    }
+    if (!docs.length) return;
+    try {
+      await actor.createEmbeddedDocuments('Item', docs);
+    } catch (err) {
+      console.warn(`${FLAG} | creating ${actor.name}'s items together failed; trying one at a time:`, err);
+      for (const doc of docs) {
+        try {
+          await actor.createEmbeddedDocuments('Item', [doc]);
+        } catch (one) {
+          const plain = { name: doc.name, type: types.includes('loot') ? 'loot' : doc.type, flags: doc.flags,
+            system: { description: doc.system?.description ?? { value: '' }, quantity: doc.system?.quantity ?? 1 } };
+          await actor.createEmbeddedDocuments('Item', [plain]).catch((e) => console.warn(`${FLAG} | skipped ${doc.name}:`, e));
+        }
+      }
+    }
+  }
+
+  /** One sheet item (see director/srd5e.py foundry_export) as dnd5e item data. */
+  _itemData(it, types) {
+    const type = types.includes(it.type) ? it.type : (types.includes('loot') ? 'loot' : it.type);
+    const system = { description: { value: it.description ? `<p>${esc(it.description)}</p>` : '' } };
+    const doc = { name: it.name, type, flags: { [FLAG]: { item: true } }, system };
+    if (['weapon', 'equipment', 'consumable', 'loot', 'tool'].includes(type)) {
+      system.quantity = it.quantity ?? 1;
+      system.weight = { value: it.weight ?? 0, units: 'lb' };
+      if (it.price) system.price = { value: it.price, denomination: 'gp' };
+    }
+    if (type === 'weapon' || type === 'equipment') system.equipped = !!it.equipped;
+    if (type === 'weapon' && it.weapon) {
+      const w = it.weapon;
+      const dice = (d) => ({ number: d.number || null, denomination: d.denomination || null, bonus: d.bonus ?? '',
+        types: w.damage.type ? [w.damage.type] : [] });
+      system.type = { value: w.kind };
+      system.damage = { base: dice(w.damage) };
+      if (w.versatile) system.damage.versatile = dice(w.versatile);
+      system.properties = w.properties ?? [];
+      system.range = { value: w.range?.value ?? null, long: w.range?.long ?? null, reach: w.range?.reach ?? null, units: 'ft' };
+      if (w.kind === 'natural') system.proficient = 1;
+    }
+    if (type === 'equipment' && it.armor) {
+      system.type = { value: it.armor.type };
+      system.armor = { value: it.armor.value, dex: it.armor.dex };
+      if (it.armor.strength) system.strength = it.armor.strength;
+      if (it.armor.stealth) system.properties = ['stealthDisadvantage'];
+    }
+    if (type === 'consumable') system.type = { value: it.consumable ?? 'trinket' };
+    if (type === 'loot') system.type = { value: 'gear' };
+    if (type === 'feat') system.type = { value: it.feat ?? 'monster' };
+    if (type === 'spell') {
+      system.level = it.level ?? 0;
+      system.preparation = { mode: 'prepared', prepared: true };
+      system.method = 'spell';
+      system.prepared = 1;
+    }
+    return doc;
+  }
+
+  /** Unconscious and prone, as the sheet says (the dead get the Defeated marker from the `defeated` op). */
+  async _applyConditions(actor, conditions) {
+    const known = new Set((CONFIG.statusEffects ?? []).map((e) => e.id));
+    for (const id of ['unconscious', 'prone']) {
+      if (!known.has(id)) continue;
+      const on = conditions.includes(id) || (id === 'unconscious' && conditions.includes('stable'));
+      if (actor.statuses?.has(id) === on) continue;
+      try {
+        await actor.toggleStatusEffect(id, { active: on });
+      } catch (err) {
+        console.warn(`${FLAG} | could not set ${id} on ${actor.name}:`, err);
+      }
     }
   }
 

@@ -109,13 +109,21 @@ export function registerDirectorTools(
   const key = z.string().min(1).max(120);
   const colour = z.string().regex(/^#[0-9a-fA-F]{6}$/);
   const name = z.string().min(1).max(120);
+  // A statblock (magi-server director/srd5e.py foundry_export): checked for shape, passed through whole.
+  const sheet = z.object({
+    name, statblock: z.string().max(50_000), hp: z.tuple([z.number().int(), z.number().int()]),
+    ac: z.number().int().nullable().optional(), conditions: z.array(z.string().max(40)).max(40),
+    lootable: z.boolean(), items: z.array(z.record(z.string(), z.unknown())).max(300),
+  }).loose();
   const op = z.discriminatedUnion('op', [
     z.object({ op: z.literal('scene'), key, name, cols: z.number().int().min(1).max(200),
       rows: z.number().int().min(1).max(200), background: colour,
       features: z.array(z.object({ cell, w: z.number().int().min(1).optional(), h: z.number().int().min(1).optional(),
         colour, label: z.string().max(80), blocks: z.boolean() })).max(5000) }),
     z.object({ op: z.literal('token'), key, name, cell, colour, kind: z.enum(['pc', 'foe', 'npc']),
-      owners: z.array(name).max(20), hp: z.tuple([z.number().int(), z.number().int()]).optional() }),
+      owners: z.array(name).max(20), hp: z.tuple([z.number().int(), z.number().int()]).optional(),
+      sheet: sheet.optional() }),
+    z.object({ op: z.literal('sheet'), key, sheet }),
     z.object({ op: z.literal('move'), key, cell }),
     z.object({ op: z.literal('remove'), keys: z.array(key).max(500) }),
     z.object({ op: z.literal('defeated'), key, value: z.boolean() }),
@@ -130,7 +138,7 @@ export function registerDirectorTools(
 
   server.tool(
     'table_apply',
-    'Run the table: apply ops in order (draw a scene\'s map and activate it, place, move or remove tokens, mark one defeated, set HP, draw an attack line, post narration or a whisper, make Foundry users for the people seated, look up the ids of users). Works only when the GM has turned on the Magi Bridge setting "Director runs the table". Cells are [column, row] on the Director\'s grid.',
+    'Run the table: apply ops in order (draw a scene\'s map and activate it, place, move or remove tokens, write a creature\'s statblock and gear onto its actor, mark one defeated, set HP, draw an attack line, post narration or a whisper, make Foundry users for the people seated, look up the ids of users). Works only when the GM has turned on the Magi Bridge setting "Director runs the table". Cells are [column, row] on the Director\'s grid.',
     { ops: z.array(op).min(1).max(200).describe('Table ops, applied in order') },
     async ({ ops }) => {
       if (!wsServer.isConnected()) return text('Error: Foundry module not connected', true);
