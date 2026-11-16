@@ -13,6 +13,7 @@ import type { GameStateStore } from '../foundry/game-state-store.js';
 import type { FoundryWsServer } from '../foundry/ws-server.js';
 import type { ActionResults } from '../foundry/action-results.js';
 import type { TableEvents } from '../foundry/table-events.js';
+import type { AdvisorInbox } from '../foundry/advisor-inbox.js';
 import { computeSpotlight } from '../foundry/spotlight.js';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
@@ -38,6 +39,7 @@ export function registerDirectorTools(
   wsServer: FoundryWsServer,
   results: ActionResults,
   tableEvents?: TableEvents,
+  advisor?: AdvisorInbox,
 ): void {
   async function act(kind: 'postAsActor' | 'rollForActor', fields: Record<string, string | undefined>): Promise<ToolResult> {
     if (!wsServer.isConnected()) return text('Error: Foundry module not connected', true);
@@ -99,6 +101,7 @@ export function registerDirectorTools(
       requiresGmConfirmation: !getConfig().directorAutonomous,
       tableControl: store.getState().tableControl,
       actionsAwaitingGm: results.pending,
+      advisorServing: advisor?.serving ?? false,
       playerCharacters: store.getActors().filter((a) => a.playerOwned ?? a.type === 'character').map((a) => ({ id: a.id, name: a.name })),
     }, null, 2)),
   );

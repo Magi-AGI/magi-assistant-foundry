@@ -10,7 +10,9 @@
     "test:integration": "tsx scripts/integration-test.ts",
     "test:director": "tsx scripts/director-test.ts",
     "repro:leak": "node scripts/leak-repro/run.mjs",
-    "test:table": "tsx scripts/table-test.ts"
+    "test:table": "tsx scripts/table-test.ts",
+    "test:advisor": "tsx scripts/advisor-test.ts",
+    "test:panel": "node scripts/panel-test/run.mjs"
   },
   "license": "MIT",
   "engines": {

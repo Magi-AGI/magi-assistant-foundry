@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="/module/styles/magi.css">
+<style>
+ body{margin:0;font:14px/1.4 "Signika",system-ui,sans-serif;background:#1b1a1f;color:#e6e1d8;display:flex;height:100vh}
+ #canvas{flex:1;background:repeating-linear-gradient(45deg,#2a2730 0 20px,#26232b 20px 40px)}
+ #sidebar{width:320px;display:flex;flex-direction:column;background:#0f0e12;border-left:1px solid #333}
+ #sidebar-tabs menu{display:flex;gap:4px;margin:0;padding:6px;list-style:none;border-bottom:1px solid #333}
+ #sidebar-tabs button{width:32px;height:28px;background:#222;color:#ddd;border:1px solid #444;border-radius:4px}
+ #sidebar-content{flex:1;min-height:0}
+ button{background:#2b2833;color:#e6e1d8;border:1px solid #4a4555;border-radius:4px;cursor:pointer}
+ textarea{background:#16151a;color:#e6e1d8;border:1px solid #4a4555;border-radius:4px}
+ #windows .window-app{position:fixed;left:40px;top:40px;width:380px;height:520px;background:#0f0e12;border:1px solid #555;display:flex;flex-direction:column}
+ #windows .window-header{padding:6px;background:#2b2833}
+ #windows .window-content{flex:1;min-height:0}
+</style>
+<script src="/stub.js"></script></head>
+<body><div id="canvas"></div><div id="windows"></div>
+<aside id="sidebar"><nav id="sidebar-tabs"><menu></menu></nav><div id="sidebar-content"></div></aside>
+<script type="module">
+import '/module/scripts/magi-bridge.mjs';
+window.__boot();
+window.__ready = true;
+</script></body></html>

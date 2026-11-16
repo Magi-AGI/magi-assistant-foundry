@@ -1,19 +1,29 @@
 {
   "id": "magi-bridge",
   "title": "Magi Bridge",
-  "description": "Bridges Foundry VTT game state to the Magi sidecar via WebSocket. Captures actors, chat, combat, scenes, and optionally video for AI GM training data.",
-  "version": "0.2.0",
+  "description": "Magi for Foundry VTT: the MAGI sidebar tab (advisor chat for players and GMs, with a popout), and the bridge that lets Magi Server's Director read and run the table through the Magi sidecar.",
+  "version": "0.3.0",
   "compatibility": {
     "minimum": "13",
     "verified": "13.351"
   },
-  "authors": [{ "name": "Magi AGI" }],
-  "esmodules": ["scripts/magi-bridge.mjs"],
+  "authors": [
+    {
+      "name": "Magi AGI"
+    }
+  ],
+  "esmodules": [
+    "scripts/magi-bridge.mjs"
+  ],
   "languages": [
     {
       "lang": "en",
       "name": "English",
       "path": "lang/en.json"
     }
-  ]
+  ],
+  "styles": [
+    "styles/magi.css"
+  ],
+  "socket": true
 }

@@ -30,12 +30,14 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `action-results.ts` — correlates Director actions with the module's `actionResult` after the GM decides
   - `spotlight.ts` — per-character share of recent chat and rolls
   - `table-events.ts` — numbered buffer of people's token drags and chat at the Director's table
+  - `advisor-inbox.ts` — numbered, long-pollable buffer of questions asked in the MAGI tab; tracks whether Magi Server's advisor is polling (serving) and which asks were answered
   - `types.ts` — FoundryScene, FoundryToken, FoundryCombat, FoundryCombatant
 - `src/mcp/` — MCP server
   - `server.ts` — StreamableHTTP transport at `/mcp`, Bearer token auth, UDS support
   - `resources.ts` — game://state, actors, scene, combat, chat/recent, video/status
   - `tools.ts` — send_whisper, get_actor_details, search_chat, get_fate_ladder
   - `director-tools.ts` — AI Director: post_as_actor, roll_for_actor (GM confirms in Foundry unless `DIRECTOR_AUTONOMOUS=true`), get_spotlight, director_status; table_apply, table_events (the Director runs the table, if the GM's "Director runs the table" setting is on)
+  - `advisor-tools.ts` — MAGI advisor: advisor_inbox (long-poll questions), advisor_say (answers and live feedback into the MAGI tab)
   - `live-events.ts` — state change → MCP resource update notifications
 - `src/video/` — Video capture
   - `capture.ts` — VideoCaptureCoordinator (binary WebM chunks → files)
@@ -43,12 +45,17 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `foundry-module/` — Foundry VTT module (browser JS, no build step)
     - `module.json` — Foundry module manifest (id: magi-bridge, v13)
     - `scripts/magi-bridge.mjs` — MagiBridge class (WS, hooks, serializers, video)
-    - `scripts/magi-table.mjs` — MagiTable: applies `tableCommand` ops (scenes, tokens, drawings, chat, users), reports `tableEvent`s
+    - `scripts/magi-table.mjs` — MagiTable: applies `tableCommand` ops (scenes, tokens, drawings, chat, users), reports `tableEvent`s; files Director actors under Magi Director / Player Characters, NPCs, Foes, Lootable Bodies, and its scenes under a Magi Director scene folder
+    - `scripts/magi-advisor.mjs` — MAGI advisor transport: questions and answers as whispered ChatMessages flagged `magi-bridge.advisor`
+    - `scripts/magi-panel.mjs` — the MAGI sidebar tab (every user) and its popout chat; falls back to a tab-bar button + window if the v13 sidebar API is missing
+    - `styles/magi.css` — the MAGI tab's styles
     - `lang/en.json` — localization strings
 - `scripts/`
   - `install-module.sh` — symlink module into Foundry Data/modules
   - `integration-test.ts` — automated end-to-end test
   - `director-test.ts` — Director tools end to end against a fake module (`npm run test:director`, sidecar running)
+  - `advisor-test.ts` — advisor_inbox / advisor_say end to end against a fake module (`npm run test:advisor`, sidecar running)
+  - `panel-test/` — the MAGI tab in Chromium against a stub of Foundry v13 (`npm run test:panel`, no sidecar)
   - `table-test.ts` — table_apply / table_events end to end against a fake module (`npm run test:table`, sidecar running)
   - `headless-gm.mjs` — headless Chromium GM for a server nobody sits at (launches the world, joins, configures the module)
 - `Dockerfile` — one image (Playwright base) for the sidecar and the headless GM
@@ -69,4 +76,6 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
 - Chat ring buffer: 200 messages max
 - Fate Core actor data uses UUID-keyed objects, not arrays
 - Systems: Fate Core fields as before; for `dnd5e` and `pf2e` the module adds a `d20` block (HP, AC, level, skill totals) and `gameReady.gameSystem`
+- The module runs for every user (MAGI tab); the bridge part (sidecar WS, hooks, table) only in the bridge GM's browser. Bridge status reaches other browsers over the module socket (`module.magi-bridge`, `statusRequest` / `status`)
+- MAGI advisor messages: a question's author is who asked (Foundry enforces it); an answer counts only if a GM wrote it; players' questions can't be GM-only. They are hidden from the chat log and never sent to the sidecar as chat or table events
 - AI Director actions are suggest mode by default: the module shows the GM the exact text or formula in a confirm dialog, then replies `actionResult` (posted / rolled / declined-by-gm)

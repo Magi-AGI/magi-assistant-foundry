@@ -13,6 +13,8 @@
  */
 
 import { MagiTable } from './magi-table.mjs';
+import { SOCKET, advisorFlag, askPayload, isAdvisorMessage, say as advisorSay, unanswered } from './magi-advisor.mjs';
+import { bridgeStatusChanged, initPanel, openPopout, readyPanel } from './magi-panel.mjs';
 
 const MODULE_ID = 'magi-bridge';
 const LOG_PREFIX = 'Magi Bridge |';
@@ -23,6 +25,12 @@ class MagiBridge {
 
   /** The table the AI Director runs, when the GM allows it. */
   table = new MagiTable((msg) => this._send(msg));
+
+  /** Whether this browser is the bridge (the GM connected to the sidecar). */
+  active = false;
+
+  /** Whether Magi Server's advisor is listening, as the sidecar last said. */
+  advisorServing = false;
 
   /** @type {WebSocket|null} Video WebSocket (separate connection) */
   videoWs = null;
@@ -115,7 +123,10 @@ class MagiBridge {
       restricted: true,
       type: Boolean,
       default: false,
-      onChange: () => this._sendGameReady(),
+      onChange: () => {
+        this._sendGameReady();
+        this.broadcastStatus();
+      },
     });
 
     game.settings.register(MODULE_ID, 'bridgeUser', {
@@ -136,6 +147,9 @@ class MagiBridge {
       type: Boolean,
       default: false,
     });
+
+    // The MAGI sidebar tab and its settings (every user).
+    initPanel(this);
   }
 
   ready() {
@@ -151,9 +165,18 @@ class MagiBridge {
     }
 
     console.log(`${LOG_PREFIX} GM detected — connecting to sidecar`);
+    this.active = true;
+    game.socket.on(SOCKET, (data) => {
+      if (data?.type === 'statusRequest') this.broadcastStatus();
+    });
     this._connect();
     this._registerHooks();
     this.table.registerHooks();
+
+    // Director actors made before the Player Characters / NPCs / Foes subfolders existed get filed once.
+    this.table.sortActors().then((moved) => {
+      if (moved) console.log(`${LOG_PREFIX} sorted ${moved} Magi Director actors into subfolders`);
+    }).catch((err) => console.warn(`${LOG_PREFIX} could not sort Magi Director actors:`, err));
 
     if (game.settings.get(MODULE_ID, 'enableDiagnostics')) {
       console.log(`${LOG_PREFIX} diagnostics enabled — emitting probe every 30s`);
@@ -187,6 +210,15 @@ class MagiBridge {
       // Send full game state snapshot
       this._sendGameReady();
 
+      // MAGI tab: the bridge is up. Questions asked while it was down get relayed now.
+      this.broadcastStatus();
+      if (game.settings.get(MODULE_ID, 'advisorEnabled')) {
+        for (const msg of unanswered()) {
+          const ask = askPayload(msg);
+          if (ask) this._send({ type: 'advisorAsk', ask });
+        }
+      }
+
       // Tell the sidecar what our recording state is right now so its mirror
       // is correct from the first message. Important after browser reload
       // (F5 stops recording but the sidecar mirror needs to know).
@@ -211,6 +243,8 @@ class MagiBridge {
     this.ws.onclose = () => {
       console.log(`${LOG_PREFIX} WebSocket closed`);
       this.ws = null;
+      this.advisorServing = false;
+      this.broadcastStatus();
       // Video capture and video WS continue independently — they have
       // their own connection and reconnect logic. Only tear them down
       // on intentional disconnect (module shutdown).
@@ -385,6 +419,13 @@ class MagiBridge {
       case 'tableCommand':
         this._handleTableCommand(msg);
         break;
+      case 'advisorSay':
+        this._handleAdvisorSay(msg);
+        break;
+      case 'advisorStatus':
+        this.advisorServing = !!msg.serving;
+        this.broadcastStatus();
+        break;
       default:
         console.warn(`${LOG_PREFIX} Unknown sidecar message:`, msg.type);
     }
@@ -483,6 +524,41 @@ class MagiBridge {
     });
   }
 
+  // ─── MAGI advisor ─────────────────────────────────────────
+
+  /** The MAGI advisor answers or gives feedback: post it as an advisor whisper. */
+  async _handleAdvisorSay(msg) {
+    const reply = (ok, detail) => this._send({ type: 'actionResult', correlationId: msg.correlationId, ok, detail });
+    try {
+      const result = await advisorSay(msg);
+      reply(result.ok, result.detail);
+    } catch (err) {
+      reply(false, `error: ${err?.message ?? err}`);
+    }
+  }
+
+  /** What the MAGI tab shows about the bridge. */
+  advisorStatus() {
+    const sidecar = !!this.ws && this.ws.readyState === WebSocket.OPEN;
+    return {
+      bridge: this.active,
+      sidecar,
+      advisor: sidecar && this.advisorServing,
+      advisorEnabled: !!game.settings.get(MODULE_ID, 'advisorEnabled'),
+      tableControl: !!game.settings.get(MODULE_ID, 'directorRunsTable'),
+      bridgeUser: game.user.name,
+      recording: this.isRecording(),
+    };
+  }
+
+  /** Tell every browser's MAGI tab (and this one's) how the bridge is. */
+  broadcastStatus() {
+    if (!this.active) return;
+    const status = this.advisorStatus();
+    game.socket.emit(SOCKET, { type: 'status', status });
+    bridgeStatusChanged(status);
+  }
+
   async _confirm(title, content) {
     const DialogV2 = foundry.applications?.api?.DialogV2;
     if (DialogV2?.confirm) {
@@ -515,6 +591,7 @@ class MagiBridge {
     const combat = game.combat ? this._serializeCombat(game.combat) : null;
     const chatHistory = game.messages.contents.slice(-50)
       .filter((m) => {
+        if (isAdvisorMessage(m)) return false;
         // Apply same whisper filter as live hooks — exclude GM-only whispers
         if (m.whisper?.length > 0) {
           const gmOnly = m.whisper.length === 1
@@ -715,6 +792,15 @@ class MagiBridge {
 
   _registerHooks() {
     Hooks.on('createChatMessage', (msg) => {
+      // MAGI advisor traffic: relay questions to the advisor; never feed it in as table chat.
+      if (isAdvisorMessage(msg)) {
+        if (advisorFlag(msg).kind === 'ask' && game.settings.get(MODULE_ID, 'advisorEnabled')) {
+          const ask = askPayload(msg);
+          if (ask) this._send({ type: 'advisorAsk', ask });
+        }
+        return;
+      }
+
       // Skip messages whispered only to the GM (e.g., Magi Assistant's own advice)
       // to avoid feeding our own output back into the reasoning loop.
       if (msg.whisper?.length > 0) {
@@ -731,6 +817,7 @@ class MagiBridge {
 
     // Fate rolls may be updated after creation (e.g., revised totals from modifiers)
     Hooks.on('updateChatMessage', (msg) => {
+      if (isAdvisorMessage(msg)) return;
       // Same whisper filter as createChatMessage — skip GM-only whispers
       if (msg.whisper?.length > 0) {
         const gmOnly = msg.whisper.length === 1
@@ -830,7 +917,9 @@ class MagiBridge {
 
   /** Convenience: start if stopped, stop if started. */
   toggleRecording() {
-    return this.isRecording() ? this.stopRecording() : this.startRecording();
+    const result = this.isRecording() ? this.stopRecording() : this.startRecording();
+    this.broadcastStatus();
+    return result;
   }
 
   // ─── Video Capture ──────────────────────────────────────
@@ -947,12 +1036,14 @@ Hooks.once('init', () => {
       stopRecording: () => bridge.stopRecording(),
       toggleRecording: () => bridge.toggleRecording(),
       isRecording: () => bridge.isRecording(),
+      openMagiChat: () => openPopout(),
     };
   }
 });
 
 Hooks.once('ready', () => {
   bridge.ready();
+  readyPanel();
 });
 
 // Add a toolbar button under the Tokens scene controls so the GM has a
