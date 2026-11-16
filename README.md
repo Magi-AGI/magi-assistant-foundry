@@ -90,6 +90,54 @@ reads for D&D 5E, its first system.
 | `director_status` | **Director.** Connection, game system, whether actions need the GM, whether the Director may run the table, and actions awaiting the GM |
 | `table_apply` | **Director runs the table.** Apply ops in order: draw a scene's map and activate it, place / move / remove tokens, mark one defeated, set HP, draw an attack line, narrate or whisper, make Foundry users for the people seated |
 | `table_events` | **Director runs the table.** Tokens people dragged and what they wrote in chat, since a sequence number |
+| `advisor_inbox` | **MAGI advisor.** Questions asked in the MAGI tab since a sequence number (who, role, character, text), with an optional long-poll wait |
+| `advisor_say` | **MAGI advisor.** Answer a question, or give live feedback to named users, the GMs, or everyone, in the MAGI tab |
+
+### The MAGI tab: advisor chat for players and GMs
+
+The module adds a **MAGI** tab to Foundry's right sidebar, for every user
+(the bridge itself still runs only in the bridge GM's browser). It holds:
+
+- **A chat with the MAGI advisor** that pops out into its own window. Anyone
+  can ask; quick buttons ask the common things (a player: *My character*,
+  *Explain a rule*, *Recap*, *What next?*; a GM: *Spotlight*, *Pacing*,
+  *Complication*, *Recap*). MAGI's live feedback arrives here too: the
+  Director's co-pilot advice for a seated person, and GM-only notes such as
+  who has been quiet. A new message while the tab is closed shows a badge and,
+  optionally, a notification.
+- **Status**: is a bridge GM logged in, is the sidecar connected, is Magi
+  Server's advisor listening, does the Director run the table.
+- **Features**: for players, how to play at a Director-run table (answering in
+  chat, dragging your token, `take` / `equip` / `stow`, lootable bodies); for
+  GMs, the *MAGI advisor* and *Director runs the table* switches, *Sort
+  Director actors*, video recording (on the bridge browser), settings, and a
+  link to the MAGI dashboard (setting *MAGI dashboard URL*).
+
+Questions and answers are whispered chat messages flagged
+`flags.magi-bridge.advisor`, so Foundry settles who asked (a user can only
+write as themselves) and who sees what:
+
+| Who asks | Question seen by | Answer seen by |
+| --- | --- | --- |
+| a player | them and the GMs | them and the GMs |
+| a GM | GMs only | GMs only |
+
+An answer counts only if a GM wrote it (the bridge GM posts MAGI's words),
+so a player can't fake one, and a player can't ask for GM-only advice. These
+messages are hidden from the chat log (each user can turn on *Show MAGI
+advisor messages in chat*) and are never passed to the Director as table talk.
+
+The bridge relays each question to the sidecar (`advisorAsk`); Magi Server's
+advisor (`director/advisor.py`) long-polls `advisor_inbox` and answers with
+`advisor_say`. Questions asked while the bridge was down are relayed when it
+reconnects (up to ten minutes old); the sidecar marks answered questions, so a
+restarted advisor doesn't answer twice. A GM can switch the advisor off with
+the *MAGI advisor* setting.
+
+The Director's actors live in the **Magi Director** actor folder, in
+**Player Characters**, **NPCs** (neutral or friendly) and **Foes** (hostile).
+An actor moves when its kind changes; older ones are sorted when the bridge
+starts, or with *Sort Director actors*.
 
 ### The GM confirmation flow
 
@@ -251,6 +299,8 @@ With the sidecar running (same `.env`):
 npm run test:integration   # state flow end to end against a fake module
 npm run test:director      # Director tools, including GM approve and decline
 npm run test:table         # Director runs the table: ops, the GM's setting, events
+npm run test:advisor       # MAGI advisor: questions in, answers out, status
+npm run test:panel         # the MAGI tab in Chromium against a stand-in Foundry (no sidecar needed)
 ```
 
 Both use a fake module in place of Foundry. The next step is a session in a

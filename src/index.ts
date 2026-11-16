@@ -8,6 +8,7 @@ import { GameStateStore } from './foundry/game-state-store.js';
 import { RecordingStateStore } from './foundry/recording-state.js';
 import { ActionResults } from './foundry/action-results.js';
 import { TableEvents } from './foundry/table-events.js';
+import { AdvisorInbox } from './foundry/advisor-inbox.js';
 import { startMcpServer, stopMcpServer, getMcpServerRegistry } from './mcp/server.js';
 import { wireLiveEvents } from './mcp/live-events.js';
 import { VideoCaptureCoordinator } from './video/capture.js';
@@ -20,6 +21,7 @@ const store = new GameStateStore();
 const recordingState = new RecordingStateStore();
 const actionResults = new ActionResults();
 const tableEvents = new TableEvents();
+const advisorInbox = new AdvisorInbox();
 const wsServer = new FoundryWsServer();
 const videoWsServer = new VideoWsServer();
 const videoCapture = new VideoCaptureCoordinator();
@@ -32,6 +34,7 @@ wsServer.on('message', (msg: ModuleMessage) => {
   switch (msg.type) {
     case 'gameReady':
       store.applyGameReady(msg);
+      sendAdvisorStatus(true);
       break;
     case 'chatMessage':
       store.applyChatMessage(msg.message);
@@ -71,6 +74,9 @@ wsServer.on('message', (msg: ModuleMessage) => {
     case 'tableEvent':
       tableEvents.push(msg.event);
       break;
+    case 'advisorAsk':
+      advisorInbox.push(msg.ask);
+      break;
     case 'pong':
       wsServer.handlePong();
       break;
@@ -78,6 +84,19 @@ wsServer.on('message', (msg: ModuleMessage) => {
       logger.warn('Unknown message type:', (msg as { type: string }).type);
   }
 });
+
+// --- MAGI advisor: tell the module whether Magi Server's advisor is listening ---
+
+let advisorServing: boolean | null = null;
+
+function sendAdvisorStatus(force = false): void {
+  const serving = advisorInbox.serving;
+  if (!force && serving === advisorServing) return;
+  advisorServing = serving;
+  wsServer.send({ type: 'advisorStatus', serving });
+}
+
+setInterval(() => sendAdvisorStatus(), 5_000).unref();
 
 // --- Wire video WebSocket events → video capture ---
 
@@ -144,7 +163,8 @@ async function main(): Promise<void> {
   wsServer.start();
   videoWsServer.start();
 
-  await startMcpServer(store, wsServer, videoCapture, recordingState, actionResults, tableEvents);
+  await startMcpServer(store, wsServer, videoCapture, recordingState, actionResults, tableEvents,
+    { inbox: advisorInbox, onPoll: () => setImmediate(() => sendAdvisorStatus()) });
 
   // Wire live events once MCP server is up
   const registry = getMcpServerRegistry();

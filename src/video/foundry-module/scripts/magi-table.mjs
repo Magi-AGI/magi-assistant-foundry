@@ -20,6 +20,8 @@ const FLAG = 'magi-bridge';
 /** Pixels per Director grid square. */
 export const CELL = 100;
 const FOLDER_NAME = 'Magi Director';
+/** Subfolders of "Magi Director", by the kind of creature: the party, the people met (neutral or friendly), the foes. */
+export const SUBFOLDERS = { pc: 'Player Characters', npc: 'NPCs', foe: 'Foes' };
 
 const esc = (s) => foundry.utils.escapeHTML(String(s ?? ''));
 
@@ -98,9 +100,42 @@ export class MagiTable {
     return scene.id;
   }
 
-  async _folder() {
-    const found = game.folders.find((f) => f.type === 'Actor' && f.name === FOLDER_NAME);
-    return found ?? Folder.create({ name: FOLDER_NAME, type: 'Actor' });
+  /** The "Magi Director" actor folder, or its subfolder for one kind (pc, npc, foe). Made when missing. */
+  async _folder(kind) {
+    const root = game.folders.find((f) => f.type === 'Actor' && f.name === FOLDER_NAME && !f.folder)
+      ?? await Folder.create({ name: FOLDER_NAME, type: 'Actor' });
+    const name = SUBFOLDERS[kind];
+    if (!name) return root;
+    return game.folders.find((f) => f.type === 'Actor' && f.name === name && f.folder?.id === root.id)
+      ?? Folder.create({ name, type: 'Actor', folder: root.id });
+  }
+
+  /**
+   * Sort every Director actor into its subfolder: by the kind the Director gave it, or, for one made
+   * before kinds were recorded, by its tokens' disposition (hostile: foe) and its type (character: pc).
+   * Returns how many moved.
+   */
+  async sortActors() {
+    const root = game.folders.find((f) => f.type === 'Actor' && f.name === FOLDER_NAME && !f.folder);
+    const ours = game.actors.filter((a) => a.getFlag(FLAG, 'key')
+      || (root && (a.folder?.id === root.id || a.folder?.folder?.id === root.id)));
+    let moved = 0;
+    for (const actor of ours) {
+      const kind = actor.getFlag(FLAG, 'kind') ?? this._guessKind(actor);
+      const folder = await this._folder(kind);
+      if (actor.folder?.id === folder.id) continue;
+      await actor.update({ folder: folder.id, [`flags.${FLAG}.kind`]: kind });
+      moved += 1;
+    }
+    return moved;
+  }
+
+  _guessKind(actor) {
+    const hostile = CONST.TOKEN_DISPOSITIONS.HOSTILE;
+    const tokens = game.scenes.contents.flatMap((s) => s.tokens.filter((t) => t.actorId === actor.id));
+    if (tokens.some((t) => t.disposition === hostile) || actor.prototypeToken?.disposition === hostile) return 'foe';
+    if (actor.type === 'character' || actor.hasPlayerOwner) return 'pc';
+    return 'npc';
   }
 
   /** One world actor per Director key, reused across runs, owned by the people who play it. */
@@ -113,18 +148,26 @@ export class MagiTable {
       const user = game.users.getName(name);
       if (user) ownership[user.id] = CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER;
     }
+    const folder = await this._folder(op.kind);
     let actor = game.actors.find((a) => a.getFlag(FLAG, 'key') === op.key);
     if (actor) {
-      await actor.update({ name: op.name, ownership });
+      // Reused across runs; it moves if its kind changed (a bystander who turned hostile is now a foe).
+      await actor.update({ name: op.name, ownership, folder: folder.id, [`flags.${FLAG}.kind`]: op.kind });
     } else {
-      const folder = await this._folder();
       actor = await Actor.create({
         name: op.name, type, folder: folder.id, ownership,
         img: op.kind === 'foe' ? 'icons/svg/skull.svg' : 'icons/svg/mystery-man.svg',
-        flags: { [FLAG]: { key: op.key } },
+        prototypeToken: { disposition: this._disposition(op.kind) },
+        flags: { [FLAG]: { key: op.key, kind: op.kind } },
       });
     }
     return actor;
+  }
+
+  /** Party friendly, foes hostile, everyone else neutral. */
+  _disposition(kind) {
+    return { pc: CONST.TOKEN_DISPOSITIONS.FRIENDLY, npc: CONST.TOKEN_DISPOSITIONS.NEUTRAL,
+      foe: CONST.TOKEN_DISPOSITIONS.HOSTILE }[kind] ?? CONST.TOKEN_DISPOSITIONS.NEUTRAL;
   }
 
   _tokenDoc(key) {
@@ -136,8 +179,7 @@ export class MagiTable {
     const actor = await this._actor(op);
     if (op.sheet) await this._applySheet(actor, op.sheet);
     if (op.hp) await this._setHp(actor, op.hp[0], op.hp[1]);
-    const disposition = { pc: CONST.TOKEN_DISPOSITIONS.FRIENDLY, npc: CONST.TOKEN_DISPOSITIONS.NEUTRAL,
-      foe: CONST.TOKEN_DISPOSITIONS.HOSTILE }[op.kind];
+    const disposition = this._disposition(op.kind);
     const data = {
       name: op.name,
       actorId: actor.id,
@@ -414,7 +456,7 @@ export class MagiTable {
     });
 
     Hooks.on('createChatMessage', (msg, _options, userId) => {
-      if (userId === game.user.id || msg.getFlag(FLAG, 'director')) return;
+      if (userId === game.user.id || msg.getFlag(FLAG, 'director') || msg.getFlag(FLAG, 'advisor')) return;
       const div = document.createElement('div');
       div.innerHTML = msg.content ?? '';
       const text = (div.textContent ?? '').trim();

@@ -24,4 +24,8 @@ export type {
   TableEventMessage,
   TableOp,
   Cell,
+  AdvisorAsk,
+  AdvisorAskMessage,
+  AdvisorSayMessage,
+  AdvisorStatusMessage,
 } from './protocol.js';

@@ -85,6 +85,31 @@ export interface TableEventMessage {
   event: TableEvent;
 }
 
+/**
+ * Someone asked the MAGI advisor something in Foundry's MAGI tab. The module
+ * reports it only for an advisor ChatMessage whose author Foundry vouches for,
+ * so `user` and `role` are who really asked.
+ */
+export interface AdvisorAsk {
+  /** The Foundry ChatMessage id of the question (reply with it as `replyTo`). */
+  id: string;
+  user: string;
+  userId: string;
+  role: 'gm' | 'assistant' | 'player';
+  /** The character this user plays, if they have one assigned. */
+  character?: string | null;
+  text: string;
+  /** 'me': answer the asker only. 'gm': a GM asked for advice the players must not see. */
+  audience: 'me' | 'gm';
+  /** The quick action the panel's button stands for, if any (e.g. 'spotlight', 'recap', 'rules'). */
+  topic?: string;
+}
+
+export interface AdvisorAskMessage {
+  type: 'advisorAsk';
+  ask: AdvisorAsk;
+}
+
 export type ModuleMessage =
   | GameReadyMessage
   | ChatMessageMessage
@@ -96,7 +121,8 @@ export type ModuleMessage =
   | PongMessage
   | RecordingStatusMessage
   | ActionResultMessage
-  | TableEventMessage;
+  | TableEventMessage
+  | AdvisorAskMessage;
 
 // --- Messages from Sidecar → Foundry module ---
 
@@ -194,6 +220,28 @@ export interface TableCommandMessage {
   ops: TableOp[];
 }
 
+/**
+ * The MAGI advisor speaks in Foundry: an answer to a question, or live feedback
+ * it chose to give. The module posts it as an advisor ChatMessage, whispered:
+ * `asker` to whoever asked `replyTo` (and the GMs), `users` to those named (and
+ * the GMs), `gm` to GMs only, `table` to everyone. The module replies `actionResult`.
+ */
+export interface AdvisorSayMessage {
+  type: 'advisorSay';
+  correlationId: string;
+  text: string;
+  audience: 'asker' | 'users' | 'gm' | 'table';
+  replyTo?: string;
+  users?: string[];
+  title?: string;
+}
+
+/** Whether Magi Server's advisor is listening, for the MAGI tab's status line. */
+export interface AdvisorStatusMessage {
+  type: 'advisorStatus';
+  serving: boolean;
+}
+
 export type SidecarMessage =
   | WhisperMessage
   | PostAsActorMessage
@@ -201,4 +249,6 @@ export type SidecarMessage =
   | TableCommandMessage
   | QueryStateMessage
   | PingMessage
-  | RecordingControlMessage;
+  | RecordingControlMessage
+  | AdvisorSayMessage
+  | AdvisorStatusMessage;

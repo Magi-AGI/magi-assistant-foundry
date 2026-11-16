@@ -1,0 +1,89 @@
+/* Magi Bridge — the MAGI sidebar tab and its popout chat. */
+
+.magi-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: 100%;
+  padding: 0.5rem;
+  overflow: hidden;
+  --magi-accent: #7b5cff;
+  --magi-on: #3fb36b;
+  --magi-off: #c0504d;
+  --magi-wait: #d9a441;
+  --magi-line: var(--color-border, rgba(127, 127, 127, 0.35));
+  --magi-soft: rgba(123, 92, 255, 0.12);
+}
+
+.magi-panel .magi-head { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+.magi-panel .magi-title { font-weight: 700; letter-spacing: 0.08em; }
+.magi-panel .magi-title i { color: var(--magi-accent); }
+.magi-panel .magi-status { flex: 1; font-size: 0.8em; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.magi-panel .magi-status::before { content: "●"; margin-right: 0.3em; }
+.magi-panel .magi-status.magi-on::before { color: var(--magi-on); }
+.magi-panel .magi-status.magi-off::before { color: var(--magi-off); }
+.magi-panel .magi-status.magi-wait::before { color: var(--magi-wait); }
+.magi-panel .magi-icon { flex: none; width: auto; padding: 0 0.4rem; }
+.magi-panel .magi-filter { flex: none; font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem; }
+
+.magi-panel .magi-log {
+  flex: 1 1 auto;
+  min-height: 8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.magi-panel .magi-msg { border: 1px solid var(--magi-line); border-radius: 6px; padding: 0.35rem 0.5rem; }
+.magi-panel .magi-say { border-left: 3px solid var(--magi-accent); background: var(--magi-soft); }
+.magi-panel .magi-ask.magi-mine { margin-left: 1.5rem; }
+.magi-panel .magi-msg header { display: flex; align-items: baseline; gap: 0.4rem; font-size: 0.8em; opacity: 0.85; margin-bottom: 0.15rem; }
+.magi-panel .magi-who { font-weight: 700; }
+.magi-panel .magi-badge { border: 1px solid var(--magi-line); border-radius: 999px; padding: 0 0.4em; font-size: 0.9em; }
+.magi-panel .magi-msg time { margin-left: auto; }
+.magi-panel .magi-body { overflow-wrap: anywhere; }
+.magi-panel .magi-body h4 { margin: 0 0 0.2rem; font-size: 1em; border: none; }
+.magi-panel .magi-empty { opacity: 0.7; font-style: italic; padding: 0.5rem; }
+
+.magi-panel .magi-quick { flex: none; display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.magi-panel .magi-quick button { flex: 1 1 auto; width: auto; font-size: 0.8em; line-height: 1.6; padding: 0 0.4rem; }
+
+.magi-panel .magi-ask-form { flex: none; display: flex; gap: 0.3rem; align-items: stretch; }
+.magi-panel .magi-ask-form textarea { flex: 1; resize: vertical; min-height: 2.6rem; }
+.magi-panel .magi-ask-form button { flex: none; width: 2.4rem; }
+
+.magi-panel .magi-features { flex: none; max-height: 45%; overflow-y: auto; border-top: 1px solid var(--magi-line); padding-top: 0.3rem; }
+.magi-panel details { margin-bottom: 0.4rem; }
+.magi-panel summary { cursor: pointer; font-weight: 700; }
+.magi-panel .magi-state, .magi-panel .magi-help { margin: 0.3rem 0; padding-left: 1.1rem; font-size: 0.85em; }
+.magi-panel .magi-state { list-style: none; padding-left: 0.2rem; }
+.magi-panel .magi-state i { font-size: 0.6em; vertical-align: middle; margin-right: 0.3rem; }
+.magi-panel .magi-on { color: var(--magi-on); }
+.magi-panel .magi-off { color: var(--magi-off); }
+.magi-panel .magi-check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.9em; }
+.magi-panel .magi-buttons { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.3rem; }
+.magi-panel .magi-buttons button { flex: 1 1 45%; width: auto; font-size: 0.8em; }
+.magi-panel .magi-dashboard { display: block; font-size: 0.85em; margin-top: 0.2rem; }
+
+/* The popout window: the chat fills it. */
+.magi-window .window-content { padding: 0; }
+.magi-window .magi-panel { height: 100%; }
+
+/* A new MAGI message while the tab is closed. */
+#sidebar-tabs [data-tab="magi"], #magi-sidebar-fallback { position: relative; }
+#sidebar-tabs .magi-unseen::after, #magi-sidebar-fallback.magi-unseen::after {
+  content: attr(data-magi-unseen);
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: #7b5cff;
+  color: #fff;
+  font: 700 10px/14px sans-serif;
+  text-align: center;
+}
