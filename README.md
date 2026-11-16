@@ -134,10 +134,14 @@ reconnects (up to ten minutes old); the sidecar marks answered questions, so a
 restarted advisor doesn't answer twice. A GM can switch the advisor off with
 the *MAGI advisor* setting.
 
-The Director's actors live in the **Magi Director** actor folder, in
-**Player Characters**, **NPCs** (neutral or friendly) and **Foes** (hostile).
-An actor moves when its kind changes; older ones are sorted when the bridge
-starts, or with *Sort Director actors*.
+Everything the Director makes is filed under **Magi Director**. In Actors it
+is split into **Player Characters**, **NPCs** (neutral or friendly), **Foes**
+(hostile) and **Lootable Bodies** (a fallen foe or bystander still carrying
+something; characters stay with the party). In Scenes, the Director's scenes
+go in a **Magi Director** folder. An actor moves when its kind or loot
+changes. Older actors and scenes are sorted when the bridge starts, or with
+*Sort Director actors*. Gear, spells and features are items embedded in those
+actors, not world items, so they need no folder of their own.
 
 ### The GM confirmation flow
 

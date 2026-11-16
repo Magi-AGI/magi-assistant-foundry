@@ -45,7 +45,7 @@ Foundry VTT bridge sidecar — captures Fate Core game state (actors, chat, comb
   - `foundry-module/` — Foundry VTT module (browser JS, no build step)
     - `module.json` — Foundry module manifest (id: magi-bridge, v13)
     - `scripts/magi-bridge.mjs` — MagiBridge class (WS, hooks, serializers, video)
-    - `scripts/magi-table.mjs` — MagiTable: applies `tableCommand` ops (scenes, tokens, drawings, chat, users), reports `tableEvent`s; files Director actors under Magi Director / Player Characters, NPCs, Foes
+    - `scripts/magi-table.mjs` — MagiTable: applies `tableCommand` ops (scenes, tokens, drawings, chat, users), reports `tableEvent`s; files Director actors under Magi Director / Player Characters, NPCs, Foes, Lootable Bodies, and its scenes under a Magi Director scene folder
     - `scripts/magi-advisor.mjs` — MAGI advisor transport: questions and answers as whispered ChatMessages flagged `magi-bridge.advisor`
     - `scripts/magi-panel.mjs` — the MAGI sidebar tab (every user) and its popout chat; falls back to a tab-bar button + window if the v13 sidebar API is missing
     - `styles/magi.css` — the MAGI tab's styles
